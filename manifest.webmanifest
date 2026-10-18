@@ -1,0 +1,24 @@
+{
+  "name": "Training Diary",
+  "short_name": "Training",
+  "description": "A private, offline-first workout diary. Your data stays on your device.",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#111518",
+  "theme_color": "#111518",
+  "lang": "en",
+  "categories": ["health", "fitness", "lifestyle"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ],
+  "shortcuts": [
+    { "name": "Log activity", "url": "./#/activity/new", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "History", "url": "./#/history", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] }
+  ]
+}

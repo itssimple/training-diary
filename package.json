@@ -1,0 +1,11 @@
+{
+  "name": "training-diary",
+  "private": true,
+  "description": "Offline-first workout diary PWA. No runtime dependencies and no build step; this file only defines test scripts.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test \"tests/unit/*.test.js\"",
+    "test:e2e": "node tests/e2e/run.mjs",
+    "serve": "node tests/serve.mjs"
+  }
+}
