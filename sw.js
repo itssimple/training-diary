@@ -5,7 +5,7 @@
 // changes, and add new static files to ASSETS (a unit test verifies the list is complete).
 
 const CACHE_PREFIX = 'training-diary-';
-const CACHE_VERSION = '1.0.0';
+const CACHE_VERSION = '1.0.1';
 const CACHE_NAME = `${CACHE_PREFIX}${CACHE_VERSION}`;
 
 const ASSETS = [

@@ -60,3 +60,12 @@ export function keepScreenOn(on) {
 }
 
 export const wakeLockSupported = () => 'wakeLock' in navigator;
+
+/** True when running as an installed app (home screen / app window) rather than a browser tab. */
+export function isInstalledApp() {
+  try {
+    return matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: fullscreen)').matches || navigator.standalone === true;
+  } catch {
+    return false;
+  }
+}

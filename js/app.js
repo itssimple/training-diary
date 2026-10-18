@@ -9,6 +9,7 @@ import { icon } from './icons.js';
 import { fmtDuration } from './util.js';
 import { sessionElapsedSec } from './model.js';
 import { restRemainingMs } from './workout-logic.js';
+import { isInstalledApp } from './device.js';
 import { onTick, applyTheme, parseHash, setRouteHandler } from './shell.js';
 
 import { renderHome } from './views/home.js';
@@ -199,8 +200,10 @@ async function boot() {
   store.subscribe((what) => { if (what === 'sessions' || what === 'all') updateActiveBar(); });
   route();
   registerServiceWorker();
-  // Ask the browser to treat our storage as persistent once the user has real data.
-  if (store.completedSessions().length > 0) requestPersistence();
+  // Ask the browser to treat our storage as persistent. Chrome and Safari never prompt; they
+  // grant it silently, mainly to installed apps, so ask whenever that is likely to succeed.
+  if (isInstalledApp() || store.completedSessions().length > 0) requestPersistence();
+  window.addEventListener('appinstalled', () => { requestPersistence(); });
   const offline = document.getElementById('offline-pill');
   const updateOnline = () => { offline.hidden = navigator.onLine; };
   window.addEventListener('online', updateOnline);

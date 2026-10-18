@@ -63,7 +63,8 @@ Changing a template never changes workouts already recorded.
   - **Merge**: adds records from the file and updates records with the same id. Your current settings are kept.
   - **Replace all**: deletes the current data on this device and uses the file instead.
 - Imports are validated first. If the file is broken or from a newer app version, nothing is changed and the problems are listed. The write itself is a single database transaction, so a failure part-way leaves existing data untouched.
-- Settings → **Ask browser to keep data** requests persistent storage, which makes it less likely that the browser evicts the data when the device is low on space. Browsers may refuse.
+- **Persistent storage.** The app asks the browser to mark its storage as persistent, so the browser does not evict it when the device runs low on space. Chrome and Safari never show a question for this. They decide silently, mostly based on whether the app is installed to the home screen (and in Chrome, how much you use it). Firefox shows a prompt. So "not granted" in Settings is normal for a browser tab. Install the app and open it from the home screen; the app then asks again automatically. Data is still saved without it, but it is less protected.
+- **iPhone:** Safari can delete website data after 7 days without use. Apps added to the Home Screen are exempt, so on iPhone install the app instead of using it in a Safari tab.
 - **Delete all data** requires typing `DELETE`.
 
 ## Offline support and updates
