@@ -468,6 +468,53 @@ await step('23. backup reminder by session count', async () => {
   await page.waitForSelector('#backup-title', { state: 'detached' });
 });
 
+await step('24. simple logging: enter results after training', async () => {
+  await go('#/settings');
+  await page.getByRole('button', { name: 'Simple', exact: true }).click();
+  await page.waitForSelector('text=Simple logging on');
+  await go('');
+  await page.getByRole('link', { name: 'Log this workout' }).click();
+  await page.waitForURL(/#\/quick\?tpl=/);
+  await page.waitForSelector('.quick-row');
+  const rows = page.locator('.quick-row');
+  const n = await rows.count();
+  expect(n >= 3, 'one row per template exercise');
+  // Fill every input, then change the first weight and the set count, and skip the second exercise.
+  const inputs = page.locator('.quick-row .quick-input');
+  for (let i = 0; i < await inputs.count(); i++) await inputs.nth(i).fill('20');
+  await inputs.first().fill('55');
+  await rows.first().locator('summary').click();
+  await rows.first().getByLabel(/: sets$/).fill('4');
+  const secondName = (await rows.nth(1).locator('strong').first().innerText()).trim();
+  await rows.nth(1).getByRole('button', { name: /^Skip / }).click();
+  await page.waitForSelector('.quick-row.is-skipped');
+  const leaked = await page.evaluate(() => [...document.querySelectorAll('.quick-list *')].flatMap((n) => [...n.childNodes]).filter((t) => t.nodeType === 3 && /\b(null|undefined|NaN)\b/.test(t.nodeValue)).map((t) => t.nodeValue));
+  expect(!leaked.length, `quick log shows: ${leaked.join(' | ')}`);
+  await shot(page, '24-quick-log');
+  await page.getByRole('button', { name: 'Save workout' }).click();
+  await page.waitForURL(/#\/history\/ses_.*done=1/);
+  await page.waitForSelector('text=Workout saved');
+  const first = page.locator('.entry-detail').first();
+  expect(await first.locator('tbody tr').count() === 4, 'four sets recorded');
+  expect(/55 kg/.test(await first.innerText()), 'changed weight recorded');
+  await page.waitForSelector(`.entry-detail:has(h3:text("${secondName}")):has-text("Skipped")`);
+
+  // Without a template: validation, then add an exercise and save.
+  await go('#/quick');
+  await page.getByRole('button', { name: 'Save workout' }).click();
+  await page.waitForSelector('.form-error:has-text("at least one exercise")');
+  await page.getByRole('button', { name: 'Add exercise' }).click();
+  await dialog().getByLabel('Search exercises').fill('leg press');
+  await dialog().locator('.pick-row', { hasText: 'Leg press' }).click();
+  await page.getByLabel('Leg press: Weight').fill('70');
+  await page.getByRole('button', { name: 'Save workout' }).click();
+  await page.waitForURL(/#\/history\/ses_/);
+  await page.waitForSelector('text=10 × 70 kg');
+  await go('#/settings');
+  await page.getByRole('button', { name: 'Live', exact: true }).click();
+  await page.waitForSelector('text=Live logging on');
+});
+
 await step('17. discard workout and delete all data require confirmation', async () => {
   await go('');
   await page.getByRole('button', { name: 'Empty workout' }).click();

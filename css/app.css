@@ -613,3 +613,22 @@ body.has-rest .toasts, body.has-active-bar .toasts { bottom: calc(var(--nav-h) +
 .cal-day.sel .cal-dots i { background: var(--accent-ink); }
 .cal-dots i.activity, .cal-legend i.activity { background: #3b82f6; }
 .cal-legend { display: flex; align-items: center; gap: 6px; margin: 0; }
+
+/* ---------- quick log (simple logging mode) ---------- */
+
+.quick-list { display: flex; flex-direction: column; gap: 10px; }
+.quick-row { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; }
+.quick-row > * + * { margin-top: 0; }
+.quick-row.is-skipped { opacity: .65; }
+.quick-row-head { display: flex; gap: 8px; align-items: flex-start; }
+.quick-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
+.quick-input { font-size: 1.25rem !important; font-weight: 750; text-align: center; min-height: 52px !important; }
+.quick-sets summary { cursor: pointer; min-height: 40px; display: flex; align-items: center; gap: 4px; font-weight: 650; }
+.quick-sets .field-row { align-items: flex-end; }
+.quick-save { position: sticky; bottom: calc(var(--nav-h) + var(--safe-b) + 8px); z-index: 5; padding-top: 4px; }
+@media (min-width: 720px), (orientation: landscape) and (max-height: 520px) {
+  .quick-save { bottom: calc(12px + var(--safe-b)); }
+}
+.quick-head, .quick-list, .quick-save, .view > .btn-block { max-width: 760px; }
+.quick-when { display: grid; grid-template-columns: minmax(0, 1fr) 120px; gap: 8px; align-items: end; }
+@media (max-width: 380px) { .quick-when { grid-template-columns: 1fr; } }

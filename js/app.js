@@ -20,6 +20,7 @@ import { renderActivity } from './views/activity.js';
 import { renderHistory, renderSession } from './views/history.js';
 import { renderProgress } from './views/progress.js';
 import { renderSettings } from './views/settings.js';
+import { renderQuick } from './views/quick.js';
 
 const ROUTES = [
   [/^\/$/, renderHome, 'home'],
@@ -29,6 +30,7 @@ const ROUTES = [
   [/^\/library$/, renderLibrary, 'train'],
   [/^\/library\/([^/]+)$/, renderExercise, 'train'],
   [/^\/workout$/, renderWorkout, 'workout'],
+  [/^\/quick$/, renderQuick, 'train'],
   [/^\/activity\/([^/]+)$/, renderActivity, 'train'],
   [/^\/history$/, renderHistory, 'history'],
   [/^\/history\/([^/]+)$/, renderSession, 'history'],

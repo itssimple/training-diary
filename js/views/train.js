@@ -48,7 +48,9 @@ function programCard(p) {
       h('a', { class: 'row-main', href: `#/train/template/${t.id}` },
         h('strong', null, t.name),
         h('span', { class: 'muted small' }, templateSummary(t))),
-      btn('Start', () => startFromTemplate(t.id), { variant: 'primary', size: 'sm', icon: 'play', ariaLabel: `Start ${t.name}` }))))
+      store.state.settings.simpleLogging
+        ? h('a', { class: 'btn btn-primary btn-sm', href: `#/quick?tpl=${t.id}`, 'aria-label': `Log ${t.name}` }, icon('edit'), h('span', null, 'Log'))
+        : btn('Start', () => startFromTemplate(t.id), { variant: 'primary', size: 'sm', icon: 'play', ariaLabel: `Start ${t.name}` }))))
       : h('p', { class: 'muted small' }, 'No workouts in this program yet.'),
     btn('Add workout', () => newTemplate(p.id), { variant: 'ghost', size: 'sm', icon: 'plus' }));
 }

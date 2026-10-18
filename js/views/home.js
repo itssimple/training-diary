@@ -47,7 +47,9 @@ export function renderHome({ el, rerender }) {
           plural((t.items || []).length, 'exercise'),
           lastOfThis ? ` · last done ${fmtRelativeDay(lastOfThis.startedAt).toLowerCase()}` : ' · not done yet'),
         h('ul', { class: 'hero-list' }, (t.items || []).slice(0, 6).map((i) => h('li', null, store.exerciseById(i.exerciseId)?.name || i.exerciseName))),
-        btn('Start workout', () => startFromTemplate(t.id), { variant: 'primary', size: 'lg', block: true, icon: 'play' })));
+        settings.simpleLogging
+          ? h('a', { class: 'btn btn-primary btn-lg btn-block', href: `#/quick?tpl=${t.id}` }, icon('edit'), h('span', null, 'Log this workout'))
+          : btn('Start workout', () => startFromTemplate(t.id), { variant: 'primary', size: 'lg', block: true, icon: 'play' })));
     } else {
       main.append(h('section', { class: 'card hero' },
         h('h2', null, 'Ready when you are'),
@@ -57,7 +59,9 @@ export function renderHome({ el, rerender }) {
   }
   main.append(h('div', { class: 'quick-actions' },
     btn('Log activity', () => { location.hash = '#/activity/new'; }, { icon: 'run' }),
-    btn('Empty workout', () => startEmptyWorkout(), { icon: 'plus', disabled: !!active }),
+    settings.simpleLogging
+      ? h('a', { class: 'btn btn-secondary', href: '#/quick' }, icon('plus'), h('span', null, 'Log other workout'))
+      : btn('Empty workout', () => startEmptyWorkout(), { icon: 'plus', disabled: !!active }),
     h('a', { class: 'btn btn-secondary', href: '#/train' }, icon('train'), h('span', null, 'All workouts'))));
 
   // 2. Weekly goal

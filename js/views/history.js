@@ -166,7 +166,9 @@ async function addPastWorkoutDialog() {
 
 export function renderHistory({ el, query }) {
   el.append(pageHead('History', { actions: [
-    btn('Past workout', addPastWorkoutDialog, { icon: 'plus' }),
+    store.state.settings.simpleLogging
+      ? h('a', { class: 'btn btn-secondary', href: '#/quick' }, icon('plus'), h('span', null, 'Log workout'))
+      : btn('Past workout', addPastWorkoutDialog, { icon: 'plus' }),
     h('a', { class: 'btn btn-secondary', href: '#/activity/new' }, icon('plus'), h('span', null, 'Log activity')),
   ] }));
   const md = h('div', { class: 'md' });

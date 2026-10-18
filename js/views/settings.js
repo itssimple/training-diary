@@ -44,6 +44,18 @@ export function renderSettings({ el, rerender }) {
   [...theme.querySelectorAll('button')].forEach((b, i) => { b.dataset.v = ['system', 'light', 'dark'][i]; });
   grid.append(section('Appearance', field('Theme', theme, { hint: 'System follows your device setting. Stored on this device only.' })));
 
+  const modeSeg = segmented([['simple', 'Simple'], ['live', 'Live']], st.simpleLogging ? 'simple' : 'live', async (v) => {
+    await store.saveSettings({ simpleLogging: v === 'simple' });
+    for (const b of modeSeg.querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.v === v));
+    toast(v === 'simple' ? 'Simple logging on: enter results after training.' : 'Live logging on: tick sets during the workout.');
+  }, 'How you log workouts');
+  [...modeSeg.querySelectorAll('button')].forEach((b, i) => { b.dataset.v = ['simple', 'live'][i]; });
+  grid.append(section('How you log workouts',
+    modeSeg,
+    h('p', { class: 'small' }, h('strong', null, 'Simple: '), 'after training, open "Log this workout", adjust the weights and save. No timers or ticking sets.'),
+    h('p', { class: 'small' }, h('strong', null, 'Live: '), 'start the workout at the gym and tick each set, with rest timer and suggestions.'),
+    h('p', { class: 'muted small' }, 'This is a setting on this phone only. Both kinds of workouts end up in the same history and charts.')));
+
   // Workout
   const rest = numInput(st.defaultRestSec, { integer: true });
   rest.addEventListener('change', saveNum('defaultRestSec', rest, { min: 0, max: 3600, integer: true, label: 'Default rest' }));

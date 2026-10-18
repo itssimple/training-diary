@@ -71,6 +71,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   backupEvery: 5,
   effortMode: 'off',
   progressionHints: false,
+  simpleLogging: false,
   barWeightKg: 20,
   platesKg: [25, 20, 15, 10, 5, 2.5, 1.25],
   targetBodyWeightKg: null,

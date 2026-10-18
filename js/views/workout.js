@@ -2,7 +2,7 @@
 
 import * as store from '../store.js';
 import * as W from '../workout-logic.js';
-import { h, btn, iconBtn, numInput, textarea, input, field, toast, confirmDialog, actionSheet, openDialog, emptyState, captureFocus, clear } from '../ui.js';
+import { h, append, btn, iconBtn, numInput, textarea, input, field, toast, confirmDialog, actionSheet, openDialog, emptyState, captureFocus, clear } from '../ui.js';
 import { icon } from '../icons.js';
 import { onTick, navigate } from '../shell.js';
 import { pickExercise } from './library.js';
@@ -448,13 +448,13 @@ export function mountSessionEditor({ el }, session, { mode = 'active' } = {}) {
       out.replaceChildren();
       if (!Number.isFinite(t)) { out.append(h('p', { class: 'muted' }, 'Enter a total weight.')); return; }
       if (r.belowBar) { out.append(h('p', null, `That is less than the bar (${fmtNum(b)} kg).`)); return; }
-      out.append(
+      append(out, [
         h('p', { class: 'muted small' }, 'On each side of the bar:'),
         r.perSide.length
           ? h('div', { class: 'plate-stack', 'aria-hidden': 'true' }, r.perSide.flatMap((p) => Array.from({ length: p.count }, () => h('span', { class: 'plate', style: { height: `${28 + Math.min(52, p.plateKg * 2)}px` } }, fmtNum(p.plateKg)))))
           : null,
         h('p', null, h('strong', null, r.perSide.map((p) => `${p.count} × ${fmtNum(p.plateKg)} kg`).join(' + ') || 'Empty bar')),
-        r.remainderKg ? h('p', { class: 'notice small' }, icon('warn'), h('span', null, `Closest with your plates: ${fmtNum(r.loadedKg)} kg (${fmtNum(Math.abs(r.remainderKg))} kg ${r.remainderKg > 0 ? 'short' : 'over'}).`)) : null);
+        r.remainderKg ? h('p', { class: 'notice small' }, icon('warn'), h('span', null, `Closest with your plates: ${fmtNum(r.loadedKg)} kg (${fmtNum(Math.abs(r.remainderKg))} kg ${r.remainderKg > 0 ? 'short' : 'over'}).`)) : null]);
     };
     total.addEventListener('input', show);
     bar.addEventListener('input', show);

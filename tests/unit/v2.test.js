@@ -172,3 +172,63 @@ test('backup reminder after N sessions or 14 days', () => {
   assert.equal(M.backupDue([], st, T0 + 15 * DAY).due, false, 'nothing new, nothing to back up');
   assert.equal(M.backupDue(mk(4), M.withDefaults({ backupEvery: 5 }), T0).due, false);
 });
+
+test('quick log: defaults from template plan and last time', () => {
+  const lp = { sets: [{ weightKg: 40, reps: 10 }, { weightKg: 42.5, reps: 8 }] };
+  const row = W.quickRowDefaults(ex.get('ex_leg_press'), { id: 'it', sets: 3, reps: 12, weightKg: null }, lp);
+  assert.deepEqual(row, { exerciseId: 'ex_leg_press', templateItemId: 'it', sets: 3, skipped: false, weightKg: 42.5, reps: 12 });
+  const fresh = W.quickRowDefaults(ex.get('ex_bench_press'));
+  assert.deepEqual(fresh, { exerciseId: 'ex_bench_press', templateItemId: null, sets: 3, skipped: false, weightKg: null, reps: 10 });
+  const assisted = W.quickRowDefaults(ex.get('ex_assisted_pull_up'), null, { sets: [{ weightKg: 30, reps: 8 }, { weightKg: 25, reps: 6 }] });
+  assert.equal(assisted.weightKg, 25, 'least assistance is the "top" weight');
+  const plank = W.quickRowDefaults(ex.get('ex_plank'), { id: 'p', sets: 3, durationSec: 40 });
+  assert.equal(plank.durationSec, 40);
+  assert.equal(plank.reps, undefined);
+});
+
+test('quick log: builds a completed workout with plan vs done, skips and extras', () => {
+  const tpl = {
+    id: 'tq', name: 'Legs', items: [
+      { id: 'a', exerciseId: 'ex_leg_press', sets: 3, reps: 10, weightKg: 40 },
+      { id: 'b', exerciseId: 'ex_leg_curl', sets: 3, reps: 12 },
+      { id: 'c', exerciseId: 'ex_plank', sets: 2, durationSec: 30 },
+    ], groups: [],
+  };
+  const s = W.buildQuickSession({
+    template: tpl, exercisesById: ex, startedAt: T0, durationMin: 50, notes: 'ok',
+    rows: [
+      { exerciseId: 'ex_leg_press', templateItemId: 'a', sets: 3, reps: 10, weightKg: 45 },
+      { exerciseId: 'ex_leg_curl', templateItemId: 'b', sets: 3, reps: 12, weightKg: 20, skipped: true },
+      { exerciseId: 'ex_db_curl', sets: 2, reps: 12, weightKg: 8 },
+    ],
+  });
+  assert.equal(s.status, 'completed');
+  assert.equal(s.endedAt - s.startedAt, 50 * 60000);
+  assert.equal(s.name, 'Legs');
+  const [press, curl, extra, plank] = s.entries;
+  assert.equal(press.sets.length, 3);
+  assert.deepEqual(press.sets[0].planned, { weightKg: 40, reps: 10 });
+  assert.deepEqual(press.sets[0].actual, { weightKg: 45, reps: 10 });
+  assert.ok(press.sets.every((x) => x.done));
+  assert.equal(curl.status, 'skipped');
+  assert.equal(extra.exerciseId, 'ex_db_curl');
+  assert.equal(extra.adHoc, true);
+  assert.equal(plank.status, 'skipped', 'template exercise left out = skipped, still in history');
+  const sum = M.sessionSummary(s);
+  assert.equal(sum.setsDone, 5);
+  assert.equal(sum.volumeKg, 45 * 10 * 3 + 8 * 12 * 2 * 2);
+  assert.equal(M.exerciseHistory([s], 'ex_leg_press')[0].topWeightKg, 45);
+});
+
+test('quick log without template and with a swapped exercise', () => {
+  const free = W.buildQuickSession({ exercisesById: ex, startedAt: T0, rows: [{ exerciseId: 'ex_running', sets: 1, durationSec: 1500, distanceKm: 5 }] });
+  assert.equal(free.entries.length, 1);
+  assert.equal(free.entries[0].adHoc, false);
+  assert.deepEqual(free.entries[0].sets[0].actual, { durationSec: 1500, distanceKm: 5 });
+  const tpl = { id: 't', name: 'T', items: [{ id: 'a', exerciseId: 'ex_chest_press_machine', sets: 3, reps: 10 }], groups: [] };
+  const sw = W.buildQuickSession({ template: tpl, exercisesById: ex, startedAt: T0, rows: [{ exerciseId: 'ex_db_bench_press', templateItemId: 'a', sets: 3, reps: 10, weightKg: 20 }] });
+  const e = sw.entries[0];
+  assert.equal(e.plannedExerciseId, 'ex_chest_press_machine');
+  assert.equal(e.exerciseId, 'ex_db_bench_press');
+  assert.equal(e.substitution.fromName, 'Chest press machine');
+});

@@ -636,3 +636,83 @@ export function clearRest(session, now = Date.now()) {
   session.rest = null;
   touch(session, now);
 }
+
+// ---------- quick log (enter results after the workout) ----------
+
+/**
+ * Default row for the quick log: the template's plan (sets/reps/time/distance) and
+ * last time's values as suggestions. Weight is taken from the plan, else last time's top set.
+ */
+export function quickRowDefaults(exercise, item = null, lastPerf = null) {
+  const fields = fieldsForType(exercise.type);
+  const lastSets = lastPerf?.sets || [];
+  const lastTop = lastSets.reduce((best, s) => (Number.isFinite(s.weightKg) && (best === null || (exercise.lowerIsBetter ? s.weightKg < best : s.weightKg > best)) ? s.weightKg : best), null);
+  const pick = (f) => {
+    if (item && Number.isFinite(item[f])) return item[f];
+    if (f === 'weightKg') return lastTop;
+    const v = lastSets.find((s) => Number.isFinite(s[f]))?.[f];
+    return Number.isFinite(v) ? v : null;
+  };
+  const sets = item && Number.isFinite(item.sets) && item.sets > 0 ? item.sets : (lastSets.length || (exercise.type === 'cardio' ? 1 : 3));
+  const row = { exerciseId: exercise.id, templateItemId: item?.id || null, sets, skipped: false };
+  for (const f of fields) row[f] = pick(f);
+  if (fields.includes('reps') && !Number.isFinite(row.reps)) row.reps = 10;
+  if (item && Number.isFinite(item.repsMax)) row.repsMax = item.repsMax;
+  return row;
+}
+
+/**
+ * Build a completed workout from quick-log rows. Each row becomes `sets` identical done sets.
+ * When a template is given, its plan is kept as the plan, so history still shows planned vs done.
+ * rows: [{ exerciseId, templateItemId?, sets, weightKg?, reps?, durationSec?, distanceKm?, skipped? }]
+ */
+export function buildQuickSession({ template = null, program = null, exercisesById, rows, startedAt, durationMin = null, notes = '', now = Date.now() }) {
+  const s = template ? createSessionFromTemplate(template, program, exercisesById, startedAt) : createEmptySession(startedAt);
+  if (!template) s.name = 'Workout';
+  const byItem = new Map(s.entries.map((e) => [e.templateItemId, e]));
+  const entries = [];
+  for (const row of rows) {
+    const ex = exercisesById.get(row.exerciseId);
+    if (!ex) continue;
+    let entry = row.templateItemId ? byItem.get(row.templateItemId) : null;
+    if (entry && entry.exerciseId !== ex.id) {
+      // Swapped in the quick log: keep the template's plan, record the substitute.
+      entry.substitution = { fromExerciseId: entry.exerciseId, fromName: entry.exercise?.name || '', note: '', at: now };
+      entry.exerciseId = ex.id;
+      entry.exercise = exerciseSnapshot(ex);
+    }
+    if (!entry) entry = makeEntry(ex, { adHoc: !!template, sets: 0 });
+    if (row.skipped) {
+      entry.status = 'skipped';
+      for (const st of entry.sets) { st.actual = null; st.done = false; }
+      entries.push(entry);
+      continue;
+    }
+    const fields = fieldsForType(ex.type);
+    const actual = {};
+    for (const f of fields) if (Number.isFinite(row[f])) actual[f] = row[f];
+    const n = Math.max(1, Math.min(50, Math.round(row.sets || 1)));
+    const plans = entry.sets.filter((x) => setKind(x) !== 'warmup').map((x) => x.planned);
+    entry.sets = Array.from({ length: n }, (_, i) => {
+      const st = makeSet(plans[i] ?? plans[plans.length - 1] ?? null);
+      st.actual = Object.keys(actual).length ? { ...actual } : null;
+      st.done = true;
+      st.doneAt = startedAt;
+      return st;
+    });
+    entry.status = 'done';
+    entries.push(entry);
+  }
+  // Template exercises not in the rows at all count as skipped (still visible in history).
+  for (const e of s.entries) if (!entries.includes(e)) { e.status = 'skipped'; entries.push(e); }
+  s.entries = entries;
+  pruneGroups(s);
+  s.status = 'completed';
+  s.endedAt = startedAt + Math.max(0, Math.round(durationMin || 0)) * 60000;
+  s.notes = notes || '';
+  s.quickLog = true;
+  s.focusEntryId = null;
+  s.createdAt = now;
+  s.updatedAt = now;
+  return s;
+}
