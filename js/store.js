@@ -190,6 +190,18 @@ export async function deleteSession(id) {
   emit('sessions');
 }
 
+/** Add imported exercises and sessions in one transaction (all or nothing). */
+export async function importBundle({ exercises = [], sessions = [] }) {
+  await guarded(() => db.atomic(['exercises', 'sessions'], (t) => {
+    for (const e of exercises) t.put('exercises', e);
+    for (const s of sessions) t.put('sessions', s);
+  }));
+  state.exercises.push(...exercises);
+  state.sessions.push(...sessions);
+  reindex();
+  emit('all');
+}
+
 // ---------- measurements ----------
 
 export async function saveMeasurement(m) {

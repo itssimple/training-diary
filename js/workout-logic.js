@@ -3,7 +3,7 @@
 // Planned values (set.planned) and actual values (set.actual) are always kept separate.
 
 import { uid, clone } from './util.js';
-import { exerciseSnapshot, fieldsForType, SET_FIELDS } from './model.js';
+import { exerciseSnapshot, fieldsForType, SET_FIELDS, PLAN_FIELDS, EFFORT_FIELDS, SET_KINDS, setKind } from './model.js';
 
 function plannedFromItem(item, type) {
   const fields = fieldsForType(type);
@@ -11,11 +11,14 @@ function plannedFromItem(item, type) {
   for (const f of SET_FIELDS) {
     if (fields.includes(f) && Number.isFinite(item[f])) p[f] = item[f];
   }
+  if (Number.isFinite(p.reps) && Number.isFinite(item.repsMax) && item.repsMax > p.reps) p.repsMax = item.repsMax;
   return p;
 }
 
-export function makeSet(planned = null) {
-  return { id: uid('set'), planned: planned && Object.keys(planned).length ? { ...planned } : null, actual: null, done: false, doneAt: null, note: '' };
+export function makeSet(planned = null, kind = 'working') {
+  const set = { id: uid('set'), planned: planned && Object.keys(planned).length ? { ...planned } : null, actual: null, done: false, doneAt: null, note: '' };
+  if (kind !== 'working') set.kind = kind;
+  return set;
 }
 
 /** Create a session entry for an exercise. */
@@ -196,7 +199,7 @@ export function setActual(session, entryId, setId, values, now = Date.now()) {
   if (!set) return null;
   const actual = { ...(set.actual || {}) };
   for (const [k, v] of Object.entries(values)) {
-    if (!SET_FIELDS.includes(k)) continue;
+    if (!SET_FIELDS.includes(k) && !EFFORT_FIELDS.includes(k)) continue;
     if (v === null || v === undefined || !Number.isFinite(v)) delete actual[k];
     else actual[k] = v;
   }
@@ -210,13 +213,36 @@ export function setPlanned(session, entryId, setId, values, now = Date.now()) {
   if (!set) return null;
   const planned = { ...(set.planned || {}) };
   for (const [k, v] of Object.entries(values)) {
-    if (!SET_FIELDS.includes(k)) continue;
+    if (!PLAN_FIELDS.includes(k)) continue;
     if (v === null || v === undefined || !Number.isFinite(v)) delete planned[k];
     else planned[k] = v;
   }
+  if (!(Number.isFinite(planned.repsMax) && Number.isFinite(planned.reps) && planned.repsMax > planned.reps)) delete planned.repsMax;
   set.planned = Object.keys(planned).length ? planned : null;
   touch(session, now);
   return set;
+}
+
+export function setSetKind(session, entryId, setId, kind, now = Date.now()) {
+  const set = findSet(session, entryId, setId);
+  if (!set || !SET_KINDS[kind]) return;
+  if (kind === 'working') delete set.kind; else set.kind = kind;
+  touch(session, now);
+}
+
+/**
+ * Insert warm-up sets (e.g. from warmupPlan) before the first working set.
+ * Returns the number added.
+ */
+export function addWarmupSets(session, entryId, plan, now = Date.now()) {
+  const entry = findEntry(session, entryId);
+  if (!entry || !plan?.length) return 0;
+  const idx = entry.sets.findIndex((s) => setKind(s) !== 'warmup');
+  const at = idx < 0 ? entry.sets.length : idx;
+  entry.sets.splice(at, 0, ...plan.map((p) => makeSet({ weightKg: p.weightKg, reps: p.reps }, 'warmup')));
+  if (entry.status === 'done') entry.status = 'pending';
+  touch(session, now);
+  return plan.length;
 }
 
 /**
@@ -290,7 +316,9 @@ export function uncompleteSet(session, entryId, setId, now = Date.now()) {
  */
 export function nextAfterSet(session, entry, set, defaultRestSec = 90) {
   const unit = unitForEntry(session, entry.id);
-  const restOf = (e) => (Number.isFinite(e.restSec) ? e.restSec : defaultRestSec);
+  const baseRest = (e) => (Number.isFinite(e.restSec) ? e.restSec : defaultRestSec);
+  // Warm-up sets only need a short break.
+  const restOf = (e) => (setKind(set) === 'warmup' ? Math.min(60, baseRest(e)) : baseRest(e));
   if (!unit || !unit.groupId) {
     const finished = entry.sets.every((s) => s.done) || entry.status === 'skipped';
     return { restSec: restOf(entry), nextEntryId: finished ? nextPendingEntryId(session, entry.id) : entry.id, roundComplete: finished };
@@ -321,8 +349,10 @@ export function nextPendingEntryId(session, afterEntryId) {
 export function addSet(session, entryId, now = Date.now()) {
   const entry = findEntry(session, entryId);
   if (!entry) return null;
-  const last = entry.sets[entry.sets.length - 1];
-  const planned = last ? (last.planned ? { ...last.planned } : (last.actual ? { ...last.actual } : null)) : null;
+  const working = entry.sets.filter((s) => setKind(s) !== 'warmup');
+  const last = working[working.length - 1] || entry.sets[entry.sets.length - 1];
+  let planned = last ? (last.planned ? { ...last.planned } : (last.actual ? { ...last.actual } : null)) : null;
+  if (planned) for (const f of EFFORT_FIELDS) delete planned[f];
   const set = makeSet(planned);
   entry.sets.push(set);
   if (entry.status === 'done') entry.status = 'pending';

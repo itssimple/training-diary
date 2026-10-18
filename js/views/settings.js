@@ -4,13 +4,15 @@ import * as store from '../store.js';
 import { h, btn, pageHead, field, numInput, input, select, segmented, checkbox, toast, confirmDialog, openDialog, readFileText, downloadFile } from '../ui.js';
 import { icon } from '../icons.js';
 import { getThemePref, setThemePref } from '../shell.js';
-import { exportAll } from '../actions.js';
+import { exportAll, shareBackup } from '../actions.js';
+import { buildCsvImport, exampleCsv } from '../csv-import.js';
 import { parseImport, mergeData } from '../backup.js';
 import { buildWeeklyIcs } from '../ics.js';
 import { storageInfo, requestPersistence } from '../db.js';
 import { wakeLockSupported, isInstalledApp } from '../device.js';
 import { APP_VERSION } from '../version.js';
 import { num, fmtNum, plural, fmtDate } from '../util.js';
+import { sessionsSinceExport } from '../model.js';
 
 const WEEKDAYS = [[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'], [5, 'Fri'], [6, 'Sat'], [0, 'Sun']];
 
@@ -53,6 +55,26 @@ export function renderSettings({ el, rerender }) {
     h('p', { class: 'muted small' }, 'Phones pause web apps in the background or when locked, so the rest alert only plays while the app is open on screen. The countdown itself stays correct and is recalculated when you return.')));
 
   // Goals
+  // Training aids
+  const effort = select([['off', 'Off'], ['rpe', 'RPE (6–10, how hard)'], ['rir', 'RIR (reps left in the tank)']], st.effortMode);
+  effort.addEventListener('change', async () => { await store.saveSettings({ effortMode: effort.value }); toast('Saved.'); });
+  const bar = numInput(st.barWeightKg);
+  bar.addEventListener('change', saveNum('barWeightKg', bar, { min: 0, max: 50, label: 'Bar weight' }));
+  const plates = input({ value: st.platesKg.map((p) => fmtNum(p)).join(', '), inputmode: 'decimal' });
+  plates.addEventListener('change', async () => {
+    const list = plates.value.split(/[;,\s]+/).map(num).filter((v) => Number.isFinite(v) && v > 0);
+    if (!list.length) { toast('Enter plate sizes separated by commas, e.g. 25, 20, 10, 5, 2.5.', { type: 'error' }); plates.value = st.platesKg.join(', '); return; }
+    const uniq = [...new Set(list)].sort((a, b) => b - a);
+    await store.saveSettings({ platesKg: uniq });
+    plates.value = uniq.map((p) => fmtNum(p)).join(', ');
+    toast('Saved.');
+  });
+  grid.append(section('Training aids',
+    field('Effort per set', effort, { hint: 'Adds an optional RPE or RIR column to strength sets.' }),
+    checkbox('Progression hints (rep ranges): suggest the next weight when you reached the top of the range on every set last time', !!st.progressionHints, (v) => store.saveSettings({ progressionHints: v })),
+    h('p', { class: 'muted small' }, 'Hints are suggestions only. Nothing changes unless you tap to apply it, and only for that workout.'),
+    h('div', { class: 'grid-2' }, field('Barbell weight', bar, { unit: 'kg' }), field('Your plates', plates, { unit: 'kg', hint: 'Sizes available at your gym, comma separated.' }))));
+
   const goal = numInput(st.weeklyGoal, { integer: true });
   goal.addEventListener('change', saveNum('weeklyGoal', goal, { min: 0, max: 21, integer: true, label: 'Weekly goal' }));
   const dist = numInput(st.weeklyDistanceGoalKm, { placeholder: 'none' });
@@ -113,14 +135,31 @@ export function renderSettings({ el, rerender }) {
   showStorage();
   const fileInput = h('input', { type: 'file', accept: 'application/json,.json', class: 'sr-only', 'aria-label': 'Choose backup file', onchange: (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) importFile(f); } });
   const lastExport = st.lastExportAt ? fmtDate(st.lastExportAt) : 'never';
+  const backupEvery = numInput(st.backupEvery, { integer: true });
+  backupEvery.addEventListener('change', saveNum('backupEvery', backupEvery, { min: 1, max: 100, integer: true, label: 'Backup reminder' }));
   grid.append(section('Your data',
     h('p', { class: 'small' }, 'Everything is stored only in this browser on this device. Nothing is uploaded, synced or backed up automatically. Clearing browser data or uninstalling the app can delete it. Exporting a backup regularly is your responsibility.'),
     storageEl, persistHelp, persistBtn,
     h('p', { class: 'small' }, `Last export: ${lastExport}. ${plural(store.completedSessions().length, 'session')}, ${plural(store.state.exercises.length, 'exercise')}, ${plural(store.state.measurements.length, 'measurement')}.`),
     h('div', { class: 'form-actions' },
-      btn('Export backup (JSON)', () => exportAll().then(rerender), { variant: 'primary', icon: 'download' }),
-      btn('Import backup…', () => fileInput.click(), { icon: 'upload' })),
+      btn('Back up now', () => shareBackup().then(rerender), { variant: 'primary', icon: 'upload' }),
+      btn('Download backup (JSON)', () => exportAll().then(rerender), { icon: 'download' }),
+      btn('Restore backup…', () => fileInput.click(), { icon: 'reset' })),
+    h('p', { class: 'muted small' }, '"Back up now" opens the share sheet where your browser supports it (save to iCloud Drive, Google Drive, email…), otherwise it downloads the file.'),
+    field('Remind me to back up after', backupEvery, { unit: 'new sessions', hint: `${plural(sessionsSinceExport(store.state.sessions, st), 'session')} since the last backup.` }),
     fileInput));
+
+  // Import history from other diaries
+  const csvInput = h('input', { type: 'file', accept: '.csv,text/csv,text/plain', class: 'sr-only', 'aria-label': 'Choose CSV file', onchange: (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) importCsv(f); } });
+  grid.append(section('Import training history',
+    h('p', { class: 'small' }, 'Bring in workouts from an old diary or another app. Two ways:'),
+    h('ul', { class: 'small' },
+      h('li', null, h('strong', null, 'Paper diary: '), 'History → "Past workout", one workout at a time.'),
+      h('li', null, h('strong', null, 'Spreadsheet or app export (CSV): '), 'one row per set. Download the template to see the columns. Column names from Strong and Hevy exports are recognised too, but that has not been tested with real exports.')),
+    h('div', { class: 'form-actions' },
+      btn('Import CSV…', () => csvInput.click(), { variant: 'primary', icon: 'upload' }),
+      btn('Download CSV template', () => downloadFile('training-diary-template.csv', exampleCsv(), 'text/csv'), { icon: 'download' })),
+    csvInput));
 
   grid.append(section('Danger zone',
     h('p', { class: 'small' }, 'Delete all workouts, activities, programs, exercises, measurements and settings on this device. Starter exercises are recreated afterwards.'),
@@ -146,6 +185,48 @@ export function renderSettings({ el, rerender }) {
       if (!reg) { toast('Offline support is not active in this browser.'); return; }
       try { await reg.update(); toast(reg.installing || reg.waiting ? 'Update found. Follow the banner to install it.' : 'You have the latest version.'); } catch { toast('Could not check for updates (offline?).'); }
     }, { size: 'sm', variant: 'ghost', icon: 'reset' })));
+
+  async function importCsv(file, weightUnit = 'kg') {
+    let text;
+    try { text = await readFileText(file); } catch (e) { toast(e.message, { type: 'error' }); return; }
+    const r = buildCsvImport(text, { exercises: store.state.exercises, sessions: store.state.sessions, weightUnit, fileName: file.name });
+    if (!r.ok) {
+      await openDialog({
+        title: 'CSV import failed', sheet: false,
+        build: (close) => h('div', null, h('p', null, 'Nothing was imported.'),
+          h('ul', { class: 'error-list' }, [...r.errors, ...(r.skipped || []).slice(0, 20)].map((x) => h('li', null, x))),
+          h('div', { class: 'dialog-actions' }, btn('Close', () => close(), { variant: 'primary' }))),
+      });
+      return;
+    }
+    const s = r.stats;
+    const choice = await openDialog({
+      title: 'Import training history', sheet: false,
+      build: (close) => h('div', null,
+        h('p', null, s.workouts
+          ? `${plural(s.workouts, 'workout')} with ${plural(s.sets, 'set')}, from ${fmtDate(s.from)} to ${fmtDate(s.to)}.`
+          : 'All workouts in this file are already in your diary.'),
+        s.duplicates ? h('p', { class: 'small' }, `${plural(s.duplicates, 'workout')} already imported earlier will be skipped.`) : null,
+        r.newExercises.length ? h('details', { open: true }, h('summary', null, `${plural(r.newExercises.length, 'new exercise')} will be added to your library`),
+          h('ul', { class: 'small' }, r.newExercises.map((e) => h('li', null, `${e.name} (${e.type})`))),
+          h('p', { class: 'muted small' }, 'Check them afterwards in Train → Exercises: set equipment, per-hand weight or lower-is-better where needed.')) : null,
+        r.skipped.length ? h('details', null, h('summary', null, `${plural(r.skipped.length, 'row')} skipped`), h('ul', { class: 'error-list' }, r.skipped.slice(0, 50).map((x) => h('li', null, x)))) : null,
+        r.warnings.length ? h('p', { class: 'muted small' }, r.warnings.join(' ')) : null,
+        h('p', { class: 'small' }, `Weights read as ${weightUnit === 'lb' ? 'pounds (converted to kg)' : 'kilograms'}. `,
+          h('button', { type: 'button', class: 'linklike', onclick: () => close(weightUnit === 'lb' ? 'kg' : 'lb') }, weightUnit === 'lb' ? 'They are in kg' : 'They are in lb')),
+        h('div', { class: 'dialog-actions' }, btn('Cancel', () => close(), { variant: 'ghost' }),
+          s.workouts ? btn(`Import ${plural(s.workouts, 'workout')}`, () => close('import'), { variant: 'primary' }) : null)),
+    });
+    if (choice === 'kg' || choice === 'lb') { importCsv(file, choice); return; }
+    if (choice !== 'import') return;
+    try {
+      await store.importBundle({ exercises: r.newExercises, sessions: r.sessions });
+      toast(`Imported ${plural(s.workouts, 'workout')}.`);
+      rerender();
+    } catch (e) {
+      toast(`Import failed, nothing was changed: ${e.message}`, { type: 'error', duration: 8000 });
+    }
+  }
 
   async function importFile(file) {
     let text;

@@ -229,7 +229,10 @@ export function renderTemplate({ el, params, query, rerender }) {
     if (fields.includes('reps')) {
       const reps = numInput(it.reps, { integer: true, class: 'w-num' });
       reps.addEventListener('input', () => { const v = num(reps.value); it.reps = v === null ? null : Math.max(0, Math.round(v)); scheduleSave(); });
-      inputs.push(field('Reps', reps));
+      inputs.push(field(it.repsMax ? 'Reps from' : 'Reps', reps));
+      const repsMax = numInput(it.repsMax, { integer: true, class: 'w-num', placeholder: 'opt.' });
+      repsMax.addEventListener('input', () => { const v = num(repsMax.value); it.repsMax = v === null ? null : Math.max(0, Math.round(v)); scheduleSave(); });
+      inputs.push(field('Reps to', repsMax, { hint: 'Range top' }));
     }
     if (fields.includes('weightKg')) {
       const w = numInput(it.weightKg, { class: 'w-num', placeholder: type === 'bodyweight' ? '+0' : '' });
@@ -294,7 +297,7 @@ export function renderTemplate({ el, params, query, rerender }) {
   function planPreview(it, type) {
     const parts = [];
     if (it.sets) parts.push(`${it.sets} ×`);
-    if (it.reps) parts.push(`${it.reps} reps`);
+    if (it.reps) parts.push(it.repsMax > it.reps ? `${it.reps}–${it.repsMax} reps` : `${it.reps} reps`);
     if (it.weightKg) parts.push(`@ ${fmtNum(it.weightKg)} kg`);
     if (it.durationSec) parts.push(fmtDurationWords(it.durationSec));
     if (it.distanceKm) parts.push(`${fmtNum(it.distanceKm)} km`);

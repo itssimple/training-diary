@@ -1,7 +1,7 @@
 // Structural validation for stored/imported data. Hand-written to avoid dependencies.
 // Errors block an import; warnings are reported but do not.
 
-import { EXERCISE_TYPES, SET_FIELDS, GROUP_TYPES } from './model.js';
+import { EXERCISE_TYPES, PLAN_FIELDS, EFFORT_FIELDS, GROUP_TYPES, SET_KINDS, WEIGHT_MODES } from './model.js';
 
 const MAX_ERRORS = 25;
 
@@ -37,7 +37,7 @@ function checkIds(list, name, c) {
 function checkValues(obj, path, c) {
   if (obj === null || obj === undefined) return;
   if (!isObj(obj)) { c.err(path, 'must be an object or null'); return; }
-  for (const f of SET_FIELDS) {
+  for (const f of [...PLAN_FIELDS, ...EFFORT_FIELDS]) {
     if (f in obj && !isNumOrNull(obj[f])) c.err(`${path}.${f}`, 'must be a number');
     if (Number.isFinite(obj[f]) && obj[f] < 0) c.err(`${path}.${f}`, 'must not be negative');
   }
@@ -50,6 +50,8 @@ function validateExercise(ex, i, c) {
   if ('muscles' in ex && !Array.isArray(ex.muscles)) c.err(`${p}.muscles`, 'must be a list');
   if ('alternativeIds' in ex && !Array.isArray(ex.alternativeIds)) c.err(`${p}.alternativeIds`, 'must be a list');
   if ('defaultRestSec' in ex && !isNumOrNull(ex.defaultRestSec)) c.err(`${p}.defaultRestSec`, 'must be a number');
+  if ('weightMode' in ex && !(ex.weightMode in WEIGHT_MODES)) c.err(`${p}.weightMode`, `unknown weight mode "${ex.weightMode}"`);
+  if ('lowerIsBetter' in ex && typeof ex.lowerIsBetter !== 'boolean') c.err(`${p}.lowerIsBetter`, 'must be true or false');
   if ('meta' in ex && ex.meta !== null && !Array.isArray(ex.meta)) c.err(`${p}.meta`, 'must be a list');
 }
 
@@ -70,7 +72,7 @@ function validateTemplate(t, i, programIds, exerciseIds, c) {
     if (!isId(it.id)) c.err(`${ip}.id`, 'missing id');
     if (!isId(it.exerciseId)) c.err(`${ip}.exerciseId`, 'missing exercise reference');
     else if (!exerciseIds.has(it.exerciseId)) c.warn(`${ip}.exerciseId`, `exercise "${it.exerciseName || it.exerciseId}" is not in the library`);
-    for (const f of ['sets', 'restSec', ...SET_FIELDS]) if (f in it && !isNumOrNull(it[f])) c.err(`${ip}.${f}`, 'must be a number');
+    for (const f of ['sets', 'restSec', ...PLAN_FIELDS]) if (f in it && !isNumOrNull(it[f])) c.err(`${ip}.${f}`, 'must be a number');
     if (it.groupId && !groupIds.has(it.groupId)) c.err(`${ip}.groupId`, 'refers to an unknown group');
   });
 }
@@ -105,6 +107,7 @@ function validateSession(s, i, c) {
       const sp = `${ep}.sets[${k}]`;
       if (!isObj(st)) { c.err(sp, 'must be an object'); return; }
       if (typeof st.done !== 'boolean') c.err(`${sp}.done`, 'must be true or false');
+      if (st.kind !== undefined && !(st.kind in SET_KINDS)) c.err(`${sp}.kind`, `unknown set type "${st.kind}"`);
       checkValues(st.planned, `${sp}.planned`, c);
       checkValues(st.actual, `${sp}.actual`, c);
     });

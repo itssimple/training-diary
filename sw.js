@@ -5,7 +5,7 @@
 // changes, and add new static files to ASSETS (a unit test verifies the list is complete).
 
 const CACHE_PREFIX = 'training-diary-';
-const CACHE_VERSION = '1.0.1';
+const CACHE_VERSION = '1.1.0';
 const CACHE_NAME = `${CACHE_PREFIX}${CACHE_VERSION}`;
 
 const ASSETS = [
@@ -16,6 +16,7 @@ const ASSETS = [
   'js/actions.js',
   'js/app.js',
   'js/backup.js',
+  'js/csv-import.js',
   'js/charts.js',
   'js/db.js',
   'js/device.js',
@@ -26,6 +27,7 @@ const ASSETS = [
   'js/seed.js',
   'js/shell.js',
   'js/store.js',
+  'js/training-aids.js',
   'js/ui.js',
   'js/util.js',
   'js/validate.js',

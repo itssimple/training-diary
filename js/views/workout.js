@@ -8,8 +8,9 @@ import { onTick, navigate } from '../shell.js';
 import { pickExercise } from './library.js';
 import { startEmptyWorkout } from '../actions.js';
 import { primeAudio, beep, vibrate, keepScreenOn } from '../device.js';
-import { fieldsForType, sessionElapsedSec, sessionSummary, lastPerformance, GROUP_TYPES, newRecordsIn } from '../model.js';
-import { fmtDuration, fmtNum, num, fmtDateShort, plural, parseDuration } from '../util.js';
+import { fieldsForType, sessionElapsedSec, sessionSummary, lastPerformance, GROUP_TYPES, newRecordsIn, fmtKg, SET_KINDS, setKind } from '../model.js';
+import { fmtDuration, fmtNum, num, fmtDateShort, plural, parseDuration, isoDateTimeLocal, parseLocalDate } from '../util.js';
+import { platesPerSide, warmupPlan, progressionHint, incrementFor } from '../training-aids.js';
 
 export function renderWorkout(ctx) {
   const s = store.activeSession();
@@ -39,24 +40,33 @@ function fmtValue(f, v, type) {
   return String(v);
 }
 
-/** "10 × 40 kg", "45 s", "10 min · 2 km" */
-export function fmtSetValues(values, type) {
+/**
+ * "10 × 40 kg", "8–12 × 22 kg/hand", "6 × 20 kg assist", "45 s", "10 min · 2 km", "… @ RPE 8".
+ * snap: the exercise snapshot (weight mode / lower-is-better).
+ */
+export function fmtSetValues(values, type, snap = null) {
   if (!values) return '';
   const fields = fieldsForType(type);
   const parts = [];
-  if (fields.includes('reps') && Number.isFinite(values.reps)) {
-    parts.push(fields.includes('weightKg') && Number.isFinite(values.weightKg) && values.weightKg > 0
-      ? `${fmtNum(values.reps, 0)} × ${fmtNum(values.weightKg)} kg${type === 'bodyweight' ? ' added' : ''}`
-      : `${fmtNum(values.reps, 0)} reps`);
-  } else if (fields.includes('weightKg') && Number.isFinite(values.weightKg)) parts.push(`${fmtNum(values.weightKg)} kg`);
+  const reps = Number.isFinite(values.reps)
+    ? (Number.isFinite(values.repsMax) && values.repsMax > values.reps ? `${fmtNum(values.reps, 0)}–${fmtNum(values.repsMax, 0)}` : fmtNum(values.reps, 0))
+    : null;
+  const showWeight = fields.includes('weightKg') && Number.isFinite(values.weightKg) && (values.weightKg > 0 || !!snap?.lowerIsBetter);
+  const kg = showWeight ? fmtKg(values.weightKg, snap, (v) => fmtNum(v)) : '';
+  if (fields.includes('reps') && reps !== null) {
+    parts.push(showWeight ? `${reps} × ${kg}${type === 'bodyweight' && !snap?.lowerIsBetter ? ' added' : ''}` : `${reps} reps`);
+  } else if (showWeight) parts.push(kg);
   if (fields.includes('durationSec') && Number.isFinite(values.durationSec)) parts.push(fmtValue('durationSec', values.durationSec, type));
   if (fields.includes('distanceKm') && Number.isFinite(values.distanceKm)) parts.push(fmtValue('distanceKm', values.distanceKm, type));
-  return parts.join(' · ');
+  let out = parts.join(' · ');
+  if (out && Number.isFinite(values.rpe)) out += ` @ RPE ${fmtNum(values.rpe, 1)}`;
+  if (out && Number.isFinite(values.rir)) out += ` (${fmtNum(values.rir, 0)} RIR)`;
+  return out;
 }
 
-export function fmtSetsCompact(sets, type) {
+export function fmtSetsCompact(sets, type, snap = null) {
   if (!sets?.length) return '';
-  const strs = sets.map((v) => fmtSetValues(v, type)).filter(Boolean);
+  const strs = sets.map((v) => fmtSetValues(v, type, snap)).filter(Boolean);
   // Collapse identical consecutive sets: "3 × (10 × 40 kg)"
   if (strs.length > 1 && strs.every((x) => x === strs[0])) return `${strs.length} sets: ${strs[0]}`;
   return strs.join(', ');
@@ -85,6 +95,16 @@ function fromInputValue(f, raw, type) {
 }
 
 const REQUIRED = { strength: ['reps'], bodyweight: ['reps'], timed: ['durationSec'], cardio: ['durationSec'], other: [] };
+
+/** Column label for the weight input: kg, kg/hand, +kg (bodyweight) or assist kg. */
+function weightLabel(snap, type) {
+  if (snap?.lowerIsBetter) return 'assist kg';
+  if (snap?.weightMode === 'perHand') return 'kg/hand';
+  return type === 'bodyweight' ? '+kg' : 'kg';
+}
+
+const RPE_VALUES = [6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10];
+const RIR_VALUES = [0, 1, 2, 3, 4, 5];
 
 // ---------- main editor ----------
 
@@ -131,7 +151,7 @@ export function mountSessionEditor({ el }, session, { mode = 'active' } = {}) {
     const sum = sessionSummary(session);
     refs.elapsed = h('span', { class: 'mono big-timer', 'aria-label': 'Workout duration' }, fmtDuration(sessionElapsedSec(session)));
     const actions = editMode
-      ? [h('a', { class: 'btn btn-primary', href: `#/history/${session.id}` }, icon('check'), h('span', null, 'Done editing'))]
+      ? [btn('Date & time', editDateTime, { variant: 'secondary', icon: 'calendar' }), h('a', { class: 'btn btn-primary', href: `#/history/${session.id}` }, icon('check'), h('span', null, 'Done editing'))]
       : [
         session.pausedAt
           ? btn('Resume', resume, { variant: 'primary', icon: 'play' })
@@ -144,7 +164,7 @@ export function mountSessionEditor({ el }, session, { mode = 'active' } = {}) {
         h('h1', { id: 'page-title', tabindex: '-1' }, session.name)),
       h('div', { class: 'page-actions' }, actions),
       h('div', { class: 'wk-stats' },
-        editMode ? h('span', null, fmtDateShort(session.startedAt)) : refs.elapsed,
+        editMode ? h('span', null, `${fmtDateShort(session.startedAt)} · ${fmtDuration(sessionElapsedSec(session))}`) : refs.elapsed,
         h('span', null, h('strong', null, `${sum.setsDone}`), ` / ${sum.setsPlanned} sets`),
         sum.volumeKg ? h('span', { title: 'Volume (weight × reps)' }, h('strong', null, fmtNum(Math.round(sum.volumeKg), 0)), ' kg') : null,
         !editMode ? btn('Finish', finish, { variant: 'primary', size: 'sm', icon: 'flag', class: 'finish-btn' }) : null));
@@ -235,8 +255,10 @@ export function mountSessionEditor({ el }, session, { mode = 'active' } = {}) {
           '. Plan values refer to the planned exercise, so weight is not pre-filled.')));
     }
     block.append(h('p', { class: 'last-time small' }, icon('history'),
-      last ? h('span', null, h('span', { class: 'muted' }, `Last time (${fmtDateShort(last.date)}): `), fmtSetsCompact(last.sets, type) || '—')
+      last ? h('span', null, h('span', { class: 'muted' }, `Last time (${fmtDateShort(last.date)}): `), fmtSetsCompact(last.sets, type, e.exercise) || '—')
         : h('span', { class: 'muted' }, 'First time recording this exercise.')));
+    const hint = settings.progressionHints && !editMode && e.status !== 'done' ? progressionHint(e, last, incrementFor(store.exerciseById(e.exerciseId) || e.exercise)) : null;
+    if (hint) block.append(hintCard(e, hint));
     if (e.planNotes) block.append(h('p', { class: 'plan-notes small' }, icon('note'), h('span', null, e.planNotes)));
 
     if (skipped) {
@@ -246,28 +268,33 @@ export function mountSessionEditor({ el }, session, { mode = 'active' } = {}) {
     }
 
     // Sets table
-    const table = h('div', { class: 'sets', role: 'table', 'aria-label': `Sets for ${e.exercise?.name}` });
-    table.style.setProperty('--cols', String(fields.length));
+    const effort = settings.effortMode !== 'off' && ['strength', 'bodyweight'].includes(type) ? settings.effortMode : null;
+    const table = h('div', { class: ['sets', effort ? 'has-effort' : ''], role: 'table', 'aria-label': `Sets for ${e.exercise?.name}` });
+    table.style.setProperty('--cols', String(fields.length + (effort ? 1 : 0)));
     table.append(h('div', { class: 'set-row set-head', role: 'row' },
       h('span', { role: 'columnheader' }, 'Set'),
       h('span', { role: 'columnheader', class: 'col-plan' }, 'Plan'),
-      fields.map((f) => h('span', { role: 'columnheader' }, f === 'durationSec' ? (type === 'cardio' ? 'min' : 'sec') : (f === 'weightKg' && type === 'bodyweight' ? '+kg' : FIELD_LABEL[f]))),
+      fields.map((f) => h('span', { role: 'columnheader' }, f === 'weightKg' ? weightLabel(e.exercise, type) : f === 'durationSec' ? (type === 'cardio' ? 'min' : 'sec') : FIELD_LABEL[f])),
+      effort ? h('span', { role: 'columnheader' }, effort.toUpperCase()) : null,
       h('span', { role: 'columnheader', class: 'sr-only' }, 'Done')));
-    e.sets.forEach((set, i) => table.append(setRow(e, set, i, type, fields, last)));
+    e.sets.forEach((set, i) => table.append(setRow(e, set, i, type, fields, last, effort)));
     block.append(table);
     block.append(h('div', { class: 'entry-foot' },
       btn('Add set', async () => { W.addSet(session, e.id); await saveNow(); draw(); }, { variant: 'ghost', size: 'sm', icon: 'plus' }),
-      e.notes ? null : btn('Note', () => editEntryNote(e), { variant: 'ghost', size: 'sm', icon: 'note' })));
+      e.notes ? null : btn('Note', () => editEntryNote(e), { variant: 'ghost', size: 'sm', icon: 'note' }),
+      isBarbell(e) ? btn('Plates', () => plateCalculator(e), { variant: 'ghost', size: 'sm', icon: 'calc' }) : null));
     if (e.notes) block.append(h('button', { type: 'button', class: 'entry-note small', onclick: () => editEntryNote(e) }, icon('note'), h('span', null, e.notes)));
     return block;
   }
 
-  function setRow(e, set, i, type, fields, last) {
+  function setRow(e, set, i, type, fields, last, effort) {
     const sug = W.suggestSetValues(e, i, last);
-    const row = h('div', { class: ['set-row', set.done ? 'done' : ''], role: 'row' });
+    const kind = setKind(set);
+    const row = h('div', { class: ['set-row', set.done ? 'done' : '', `kind-${kind}`], role: 'row' });
+    const kindLabel = kind === 'working' ? '' : `, ${SET_KINDS[kind].label}`;
     row.append(h('span', { role: 'cell' },
-      h('button', { type: 'button', class: 'set-no', 'aria-label': `Set ${i + 1} options`, onclick: () => setMenu(e, set, i) }, String(i + 1), set.note ? h('span', { class: 'dot-note', 'aria-label': 'has note' }) : null)));
-    row.append(h('span', { role: 'cell', class: 'col-plan muted small' }, set.planned ? fmtSetValues(set.planned, type) || '—' : '—'));
+      h('button', { type: 'button', class: 'set-no', 'aria-label': `Set ${i + 1}${kindLabel} options`, onclick: () => setMenu(e, set, i) }, SET_KINDS[kind].short || String(workingNumber(e, i)), set.note ? h('span', { class: 'dot-note', 'aria-label': 'has note' }) : null)));
+    row.append(h('span', { role: 'cell', class: 'col-plan muted small' }, set.planned ? fmtSetValues(set.planned, type, e.exercise) || '—' : '—'));
     for (const f of fields) {
       const cur = set.actual?.[f];
       const ph = Number.isFinite(sug.values[f]) ? fmtNum(toInputValue(f, sug.values[f], type), 2) : '';
@@ -283,6 +310,7 @@ export function mountSessionEditor({ el }, session, { mode = 'active' } = {}) {
       inp.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); toggleSet(e, set, i, sug); } });
       row.append(h('span', { role: 'cell' }, inp));
     }
+    if (effort) row.append(h('span', { role: 'cell' }, effortSelect(e, set, i, effort)));
     row.append(h('span', { role: 'cell' },
       h('button', {
         type: 'button', class: ['check-btn', set.done ? 'on' : ''], 'aria-pressed': String(set.done),
@@ -339,10 +367,147 @@ export function mountSessionEditor({ el }, session, { mode = 'active' } = {}) {
     if (scroll) scrollToDetail();
   }
 
+  // ----- training aids -----
+
+  const isBarbell = (e) => e.exercise?.equipment === 'Barbell' && e.exercise?.type === 'strength';
+
+  /** Working sets are numbered 1, 2, 3…; warm-ups show "W" instead. */
+  function workingNumber(e, i) {
+    return e.sets.slice(0, i + 1).filter((s) => setKind(s) !== 'warmup').length;
+  }
+
+  function effortSelect(e, set, i, mode) {
+    const values = mode === 'rpe' ? RPE_VALUES : RIR_VALUES;
+    const cur = set.actual?.[mode];
+    const sel = h('select', {
+      class: 'effort-select',
+      'aria-label': `Set ${i + 1} ${mode === 'rpe' ? 'RPE (rate of perceived exertion, 6–10)' : 'reps in reserve'}`,
+      dataset: { focus: `${set.id}:${mode}` },
+    },
+    h('option', { value: '' }, '–'),
+    values.map((v) => h('option', { value: String(v), selected: cur === v }, mode === 'rir' && v === 5 ? '5+' : String(v))));
+    sel.addEventListener('change', async () => {
+      W.setActual(session, e.id, set.id, { [mode]: sel.value === '' ? null : Number(sel.value) });
+      await saveNow();
+    });
+    return sel;
+  }
+
+  function hintCard(e, hint) {
+    const snap = e.exercise;
+    const kg = (v) => fmtKg(v, snap, (x) => fmtNum(x));
+    const pending = e.sets.filter((s) => !s.done && setKind(s) !== 'warmup');
+    return h('div', { class: 'hint-card small', role: 'note' }, icon('progress'),
+      h('div', null,
+        h('p', null, `Last time every set reached ${hint.topReps} reps at ${kg(hint.fromKg)}. `,
+          hint.lowerIsBetter ? `Consider less assistance: ${kg(hint.toKg)}.` : `Consider ${kg(hint.toKg)}.`),
+        pending.length ? btn(`Plan ${kg(hint.toKg)} for remaining sets`, async () => {
+          for (const s of pending) W.setPlanned(session, e.id, s.id, { weightKg: hint.toKg });
+          await saveNow();
+          draw();
+          toast('Plan updated for this workout. The template is unchanged.');
+        }, { size: 'sm', variant: 'secondary' }) : null));
+  }
+
+  function firstWorkingWeight(e) {
+    const idx = e.sets.findIndex((s) => setKind(s) !== 'warmup' && !s.done);
+    if (idx < 0) return null;
+    const s = e.sets[idx];
+    return s.actual?.weightKg ?? W.suggestSetValues(e, idx, lastPerf(e.exerciseId)).values.weightKg ?? null;
+  }
+
+  async function addWarmups(e) {
+    const st = store.state.settings;
+    const inp = numInput(firstWorkingWeight(e), { autofocus: true });
+    const res = await openDialog({
+      title: `Warm-up · ${e.exercise?.name}`, sheet: false,
+      build: (close) => h('form', { class: 'form', onsubmit: (ev) => { ev.preventDefault(); close(num(inp.value)); } },
+        field('First working weight', inp, { unit: weightLabel(e.exercise, e.exercise?.type) }),
+        h('p', { class: 'muted small' }, 'Adds lighter sets before your working sets. Warm-ups are not counted in volume, set counts or records.'),
+        h('div', { class: 'dialog-actions' }, btn('Cancel', () => close(), { variant: 'ghost' }), btn('Add warm-up sets', null, { variant: 'primary', type: 'submit' }))),
+    });
+    if (!Number.isFinite(res)) return;
+    const plan = warmupPlan(res, { barbell: isBarbell(e), barKg: st.barWeightKg || 20, stepKg: e.exercise?.weightMode === 'perHand' ? 2 : 2.5 });
+    if (!plan.length) { toast('That weight is light enough to start without warm-up sets.'); return; }
+    W.addWarmupSets(session, e.id, plan);
+    await saveNow();
+    draw();
+    toast(`Added ${plural(plan.length, 'warm-up set')}.`);
+  }
+
+  async function plateCalculator(e, set = null) {
+    const st = store.state.settings;
+    const start = set?.actual?.weightKg ?? set?.planned?.weightKg ?? firstWorkingWeight(e) ?? null;
+    const total = numInput(start, { autofocus: true });
+    const bar = numInput(st.barWeightKg ?? 20);
+    const out = h('div', { class: 'plates-out', 'aria-live': 'polite' });
+    const show = () => {
+      const t = num(total.value);
+      const b = num(bar.value) ?? 20;
+      const r = platesPerSide(t, b, st.platesKg);
+      out.replaceChildren();
+      if (!Number.isFinite(t)) { out.append(h('p', { class: 'muted' }, 'Enter a total weight.')); return; }
+      if (r.belowBar) { out.append(h('p', null, `That is less than the bar (${fmtNum(b)} kg).`)); return; }
+      out.append(
+        h('p', { class: 'muted small' }, 'On each side of the bar:'),
+        r.perSide.length
+          ? h('div', { class: 'plate-stack', 'aria-hidden': 'true' }, r.perSide.flatMap((p) => Array.from({ length: p.count }, () => h('span', { class: 'plate', style: { height: `${28 + Math.min(52, p.plateKg * 2)}px` } }, fmtNum(p.plateKg)))))
+          : null,
+        h('p', null, h('strong', null, r.perSide.map((p) => `${p.count} × ${fmtNum(p.plateKg)} kg`).join(' + ') || 'Empty bar')),
+        r.remainderKg ? h('p', { class: 'notice small' }, icon('warn'), h('span', null, `Closest with your plates: ${fmtNum(r.loadedKg)} kg (${fmtNum(Math.abs(r.remainderKg))} kg ${r.remainderKg > 0 ? 'short' : 'over'}).`)) : null);
+    };
+    total.addEventListener('input', show);
+    bar.addEventListener('input', show);
+    show();
+    await openDialog({
+      title: 'Plate calculator', sheet: false,
+      build: (close) => h('div', { class: 'form' },
+        h('div', { class: 'grid-2' }, field('Total weight', total, { unit: 'kg' }), field('Bar', bar, { unit: 'kg' })),
+        out,
+        h('p', { class: 'muted small' }, `Plates: ${st.platesKg.map((p) => fmtNum(p)).join(', ')} kg. Change them in Settings.`),
+        h('div', { class: 'dialog-actions' }, btn('Close', () => close(), { variant: 'primary' }))),
+    });
+  }
+
+  async function editDateTime() {
+    const when = input({ type: 'datetime-local', value: isoDateTimeLocal(session.startedAt), max: isoDateTimeLocal(Date.now()), autofocus: true });
+    const mins = numInput(Math.round(sessionElapsedSec(session) / 60), { integer: true });
+    const err = h('p', { class: 'form-error', role: 'alert', hidden: true });
+    const res = await openDialog({
+      title: 'Date and duration', sheet: false,
+      build: (close) => h('form', {
+        class: 'form', onsubmit: (ev) => {
+          ev.preventDefault();
+          const t = parseLocalDate(when.value);
+          const m = num(mins.value);
+          if (!t) { err.textContent = 'Enter a valid date and time.'; err.hidden = false; return; }
+          if (m === null || m < 0 || m > 24 * 60) { err.textContent = 'Duration must be 0–1440 minutes.'; err.hidden = false; return; }
+          close({ t, m });
+        },
+      }, err, field('Started', when), field('Duration', mins, { unit: 'minutes' }),
+      h('div', { class: 'dialog-actions' }, btn('Cancel', () => close(), { variant: 'ghost' }), btn('Save', null, { variant: 'primary', type: 'submit' }))),
+    });
+    if (!res) return;
+    session.startedAt = res.t;
+    session.endedAt = res.t + Math.round(res.m) * 60000;
+    session.pausedMs = 0;
+    session.updatedAt = Date.now();
+    await saveNow();
+    draw();
+    toast('Date and duration updated.');
+  }
+
   // ----- menus & dialogs -----
 
   function setMenu(e, set, i) {
+    const kind = setKind(set);
     actionSheet(`Set ${i + 1} · ${e.exercise?.name}`, [
+      ...Object.entries(SET_KINDS).map(([k, v]) => ({
+        label: k === kind ? `${v.label} (current)` : `Mark as ${v.label.toLowerCase()}`, icon: k === kind ? 'check' : 'edit', hidden: k === kind,
+        hint: k === 'warmup' ? 'Not counted in volume, sets or records' : null,
+        run: async () => { W.setSetKind(session, e.id, set.id, k); await saveNow(); draw(); },
+      })),
+      { label: 'Plate calculator', icon: 'calc', hidden: !isBarbell(e), run: () => plateCalculator(e, set) },
       { label: 'Edit plan for this set', icon: 'edit', run: () => editPlan(e, set, i) },
       { label: set.note ? 'Edit set note' : 'Add set note', icon: 'note', run: () => editSetNote(e, set, i) },
       { label: 'Mark not done', icon: 'reset', hidden: !set.done, run: async () => { W.uncompleteSet(session, e.id, set.id); await saveNow(); draw(); } },
@@ -363,14 +528,15 @@ export function mountSessionEditor({ el }, session, { mode = 'active' } = {}) {
           ev.preventDefault();
           const out = {};
           for (const f of fields) out[f] = fromInputValue(f, inputs[f].value, type);
+          if (inputs.repsMax) out.repsMax = fromInputValue('reps', inputs.repsMax.value, type);
           close(out);
         },
       },
       h('p', { class: 'muted small' }, 'Changes the plan for this workout only. The template is not changed.'),
       h('div', { class: 'grid-2' }, fields.map((f) => {
         inputs[f] = numInput(toInputValue(f, set.planned?.[f], type), { integer: f === 'reps' });
-        return field(f === 'durationSec' ? 'Time' : f === 'weightKg' ? 'Weight' : f === 'reps' ? 'Reps' : 'Distance', inputs[f], { unit: f === 'durationSec' ? (type === 'cardio' ? 'min' : 's') : f === 'weightKg' ? 'kg' : f === 'distanceKm' ? 'km' : null });
-      })),
+        return field(f === 'durationSec' ? 'Time' : f === 'weightKg' ? 'Weight' : f === 'reps' ? 'Reps (min)' : 'Distance', inputs[f], { unit: f === 'durationSec' ? (type === 'cardio' ? 'min' : 's') : f === 'weightKg' ? weightLabel(e.exercise, type) : f === 'distanceKm' ? 'km' : null });
+      }), fields.includes('reps') ? field('Reps (max, optional)', inputs.repsMax = numInput(set.planned?.repsMax, { integer: true, placeholder: 'no range' }), { hint: 'For a range like 8–12.' }) : null),
       h('div', { class: 'dialog-actions' }, btn('Cancel', () => close(), { variant: 'ghost' }), btn('Save plan', null, { variant: 'primary', type: 'submit' }))),
     });
     if (!res) return;
@@ -430,6 +596,8 @@ export function mountSessionEditor({ el }, session, { mode = 'active' } = {}) {
       { label: 'Reopen exercise', icon: 'reset', hidden: e.status !== 'done' || e.sets.every((s) => s.done), run: async () => { W.reopenEntry(session, e.id); await saveNow(); draw(); } },
       { label: e.notes ? 'Edit notes' : 'Add notes', icon: 'note', run: () => editEntryNote(e) },
       { label: `Rest time (${Number.isFinite(e.restSec) ? e.restSec : defaultRest} s)`, icon: 'timer', run: () => editRest(e) },
+      { label: 'Add warm-up sets', icon: 'plus', hidden: !['strength'].includes(e.exercise?.type) || e.exercise?.lowerIsBetter, hint: 'Ramp up to your first working weight', run: () => addWarmups(e) },
+      { label: 'Plate calculator', icon: 'calc', hidden: !isBarbell(e), run: () => plateCalculator(e) },
       { label: 'Move up', icon: 'up', hidden: unit?.groupId ? session.entries[session.entries.indexOf(e) - 1]?.groupId !== e.groupId : ui <= 0, run: async () => { W.moveEntry(session, e.id, -1); await saveNow(); draw(); } },
       { label: 'Move down', icon: 'down', hidden: unit?.groupId ? session.entries[session.entries.indexOf(e) + 1]?.groupId !== e.groupId : ui >= units.length - 1, run: async () => { W.moveEntry(session, e.id, 1); await saveNow(); draw(); } },
       { label: 'Superset with next exercise', icon: 'link', hidden: ui >= units.length - 1 || !!unit?.groupId, run: async () => { W.linkWithNext(session, e.id, 'superset'); await saveNow(); draw(); } },

@@ -51,6 +51,32 @@ Each phone keeps its own diary. Two people using their own phones have completel
 - Tap a set number for set options (edit plan, note, remove). Use **⋯** on an exercise to skip it, mark it complete, change rest, move it, superset it or remove it.
 - **Pause** stops the workout timer and the rest timer. **Finish** saves the workout. **Discard** (in the ⋯ menu) deletes it after confirmation.
 - Everything is saved as you go. If you close the browser or refresh, reopen the app and use **Resume workout**.
+- **Set types:** tap a set number to mark it as warm-up (W), drop set (D) or to failure (F). Warm-ups are kept in the record but not counted in volume, set counts, progress charts or records. **⋯ → Add warm-up sets** generates a ramp (e.g. bar × 10, 40%, 60%, 80%) up to your first working weight.
+- **Plate calculator:** "Plates" on barbell exercises shows what to load on each side. Set your bar and plate sizes in Settings → Training aids.
+- **Effort (optional):** Settings → Training aids → Effort per set adds an RPE (6–10) or RIR column.
+- **Rep ranges and progression hints:** give a template exercise a range ("Reps 8" to "Reps to 12"). With hints switched on, if you reached the top of the range on every set last time at one weight, the app suggests the next step (2.5 kg, 2 kg per hand, or the exercise's own weight step). It never changes anything unless you tap to apply it, and then only for that workout.
+
+### Exercise settings that affect statistics
+
+- **Weight is entered as: per hand.** For dumbbell exercises, enter the weight of one dumbbell. Volume counts both. Starter dumbbell exercises use this.
+- **Lower weight is better.** For assisted machines (assisted pull-up/dip), less assistance is progress. Records show "least assistance", charts invert the axis, and no volume or 1RM is calculated.
+
+### Logging workouts afterwards and old diaries
+
+- **History → Past workout:** create a finished workout at any past date and time (from a template or empty), then tick the sets you did. **Date & time** in the editor changes the date and duration of any recorded workout.
+- **Settings → Import training history (CSV):** one row per set. Download the template from the same place, fill it in a spreadsheet and import it. A preview shows what will be added. New exercise names are created in your library, rows that can't be read are listed, and workouts already imported are skipped. Columns:
+
+  | Column | Required | Example |
+  |---|---|---|
+  | `date` | yes | `2025-03-03 18:30` (also `03.03.2025 18:30`, `3 Mar 2025, 18:30`) |
+  | `exercise` | yes | `Barbell back squat` (matched to your library by name) |
+  | `workout` | no | `Full body A` (rows with the same date and workout form one session) |
+  | `duration_min` | no | `55` |
+  | `set_type` | no | `warmup`, `drop`, `failure` (empty = working set) |
+  | `weight_kg`, `reps`, `distance_km`, `seconds` | at least one | `80`, `5` |
+  | `rpe`, `rir`, `notes` | no | `8.5` |
+
+  Column names used by Strong and Hevy exports (e.g. `Exercise Name`, `Set Order`, `weight_kg`, `start_time`) are recognised as well, and pounds can be converted. This has only been tested with hand-made files, not real exports from those apps. Ambiguous dates like `03/04/2025` are rejected rather than guessed.
 
 Changing a template never changes workouts already recorded.
 
@@ -58,7 +84,7 @@ Changing a template never changes workouts already recorded.
 
 - Data is stored in **IndexedDB** in your browser, on this device only. It is never sent anywhere.
 - There is **no automatic backup or sync**. If you clear site data, uninstall the browser or lose the phone, the diary is gone unless you exported it.
-- **Back up:** Settings → Your data → **Export backup (JSON)**. Store the file somewhere safe (cloud drive, email to yourself). Home shows a reminder if you have not exported for 30 days.
+- **Back up:** Settings → Your data → **Back up now**. Where the browser can share files, this opens the share sheet so you can save straight to iCloud Drive, Google Drive or email. Otherwise it downloads the JSON file. Home and the post-workout screen remind you after a set number of new sessions (default 5, Settings → "Remind me to back up after") or 14 days.
 - **Restore / move to a new phone:** Settings → **Import backup…**, pick the file, then choose:
   - **Merge**: adds records from the file and updates records with the same id. Your current settings are kept.
   - **Replace all**: deletes the current data on this device and uses the file instead.
@@ -135,6 +161,7 @@ An **activity session** (`kind: "activity"`) stores manual metrics: duration, di
 
 - `DB_VERSION` in `db.js` covers IndexedDB structure. Upgrades only add stores or indexes and never delete them.
 - `SCHEMA_VERSION` in `model.js` covers the record shape. When the app starts with older data, `migrations.js` converts it step by step. A copy of the pre-migration data is stored in the `meta` store first. Old export files go through the same migrations on import, and files from a newer app version are rejected.
+- **Version 2** (app 1.1.0) added `weightMode` and `lowerIsBetter` to exercises and their snapshots in recorded sessions, set `kind` (warm-up/drop/failure; missing = working set), `planned.repsMax`, and `actual.rpe`/`actual.rir`. The migration marks the starter dumbbell exercises as per hand and the assisted pull-up as lower-is-better, and copies those flags into existing history.
 
 ## Development and testing
 
@@ -154,9 +181,9 @@ node tests/e2e/run.mjs --shots=/tmp/td-shots   # also saves screenshots
 
 Service workers need `https` or `localhost`. Opening `index.html` as a `file://` URL will not work.
 
-**Unit tests (47)** cover date/number parsing, set completion and suggestions, supersets and rest logic, substitution (including the split when sets were already done), pause/resume and timestamp-based timers, records, weekly goal/streak, next-workout rotation, export → import round trip, invalid imports, migration runner, merge behaviour, `.ics` output, and checks that every runtime file is precached, versions match, no root-absolute URLs and no external URLs are used.
+**Unit tests (65)** cover set types and warm-ups, per-hand and assisted (lower-is-better) statistics, the v1 → v2 data migration, rep ranges and effort, plate and warm-up calculators, progression hints, backup reminders, CSV parsing and import (dates, durations, aliases, lb conversion, duplicates), date/number parsing, set completion and suggestions, supersets and rest logic, substitution (including the split when sets were already done), pause/resume and timestamp-based timers, records, weekly goal/streak, next-workout rotation, export → import round trip, invalid imports, migration runner, merge behaviour, `.ics` output, and checks that every runtime file is precached, versions match, no root-absolute URLs and no external URLs are used.
 
-**End-to-end test** (headless Chromium, phone viewport, served under `/training-diary/`) walks through: first launch; adding/editing an exercise (incl. duplicate-name rejection); creating a program, template and superset; starting a workout and recording sets; substituting an exercise; recording a superset; pause/resume; refreshing mid-workout; finishing and viewing history; verifying a template edit does not rewrite history; logging cardio; progress charts and empty states; body measurement; export and replace-import; rejecting invalid imports without data loss; offline relaunch; theme switching and persistence; wide vs narrow layouts; no horizontal overflow; discard workout; delete-all with typed confirmation.
+**End-to-end test** (headless Chromium, phone viewport, served under `/training-diary/`) walks through: migrating a real version-1 IndexedDB database; warm-up sets, plate calculator and RPE; adding a past workout, editing its date and getting a progression hint from it; the calendar view; CSV import and duplicate skipping; the backup reminder; first launch; adding/editing an exercise (incl. duplicate-name rejection); creating a program, template and superset; starting a workout and recording sets; substituting an exercise; recording a superset; pause/resume; refreshing mid-workout; finishing and viewing history; verifying a template edit does not rewrite history; logging cardio; progress charts and empty states; body measurement; export and replace-import; rejecting invalid imports without data loss; offline relaunch; theme switching and persistence; wide vs narrow layouts; no horizontal overflow; discard workout; delete-all with typed confirmation.
 
 ## Deployment to GitHub Pages
 
@@ -188,6 +215,8 @@ These are platform limits or deliberate scope decisions:
 - **Rest alerts only play while the app is visible.** Phones suspend web apps in the background or when locked, so the sound/vibration may not fire then. The countdown is timestamp-based, so it is correct again as soon as you return. Vibration is not supported on iPhone. Sound needs at least one tap in the app first (browser autoplay rules).
 - **Keep screen on** uses the Screen Wake Lock API where available. Support differs between browsers and iOS versions.
 - **No GPS, heart-rate or calorie measurement.** Activity metrics are entered manually.
+- **Sharing the backup file on Android Chrome** may not offer the share sheet, because Chrome only allows sharing certain file types. The button then falls back to a download (Downloads folder). Not verified on a real device.
+- **CSV import** is tested with the documented format and hand-made Strong/Hevy-style files only, not with real exports from those apps.
 - **Metric units only** (kg, km, cm, min/km, km/h). Units are stored explicitly per value, so imperial support could be added later without migrating data.
 - **No sync between devices.** Use export/import to move data.
 - Estimated 1RM uses the Epley formula and is shown only for sets of 1–12 reps. It is an estimate, not a measurement.

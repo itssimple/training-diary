@@ -78,6 +78,11 @@ const RAW = [
   E('other_activity', 'Other activity', 'Other', 'Other', 'other', [], { alt: [], activity: true }),
 ];
 
+/** Starter exercises entered as the weight of one dumbbell (used in each hand). */
+export const PER_HAND_STARTERS = new Set(['ex_db_rdl', 'ex_lunge', 'ex_split_squat', 'ex_db_bench_press', 'ex_incline_db_press', 'ex_db_shoulder_press', 'ex_lateral_raise', 'ex_reverse_fly', 'ex_db_curl', 'ex_farmers_walk']);
+/** Starter exercises where a lower number is progress (assistance weight). */
+export const LOWER_IS_BETTER_STARTERS = new Set(['ex_assisted_pull_up']);
+
 export function starterExercises(now = Date.now()) {
   return RAW.map((r) => ({
     id: r.id,
@@ -92,6 +97,8 @@ export function starterExercises(now = Date.now()) {
     alternativeIds: (r.alt || []).map((a) => `ex_${a}`),
     defaultRestSec: r.rest ?? null,
     cardioDisplay: r.cardio || (r.type === 'cardio' ? 'pace' : null),
+    weightMode: PER_HAND_STARTERS.has(r.id) ? 'perHand' : 'total',
+    lowerIsBetter: LOWER_IS_BETTER_STARTERS.has(r.id),
     isActivity: !!r.activity,
     archived: false,
     meta: [],

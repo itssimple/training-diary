@@ -8,11 +8,46 @@
 // IndexedDB structure changes (new stores/indexes) go into db.js STORE_UPGRADES instead.
 
 import { SCHEMA_VERSION } from './model.js';
+import { PER_HAND_STARTERS, LOWER_IS_BETTER_STARTERS } from './seed.js';
 
 /** DATA_MIGRATIONS[n] converts data of version n to version n + 1. */
 export const DATA_MIGRATIONS = {
-  // Example for a future version:
-  // 1: (data) => ({ ...data, sessions: data.sessions.map((s) => ({ ...s, newField: s.newField ?? null })) }),
+  /**
+   * v1 → v2: exercises get `weightMode` ('total' | 'perHand') and `lowerIsBetter`.
+   * Starter dumbbell exercises become per hand, the assisted pull-up lower-is-better.
+   * Snapshots inside recorded sessions get the same flags from the library entry,
+   * so existing history is scored the way the exercise is now defined.
+   * Missing set `kind` means a working set, so sets need no change.
+   */
+  1: (data) => {
+    const exercises = (data.exercises || []).map((ex) => ({
+      ...ex,
+      weightMode: ex.weightMode ?? (ex.builtIn && PER_HAND_STARTERS.has(ex.id) ? 'perHand' : 'total'),
+      lowerIsBetter: ex.lowerIsBetter ?? !!(ex.builtIn && LOWER_IS_BETTER_STARTERS.has(ex.id)),
+    }));
+    const byId = new Map(exercises.map((e) => [e.id, e]));
+    const fix = (snap, id) => {
+      if (!snap) return snap;
+      const lib = byId.get(id);
+      return {
+        ...snap,
+        weightMode: snap.weightMode ?? lib?.weightMode ?? 'total',
+        lowerIsBetter: snap.lowerIsBetter ?? lib?.lowerIsBetter ?? false,
+      };
+    };
+    const sessions = (data.sessions || []).map((s) => {
+      if (s.kind === 'activity') return s.activity ? { ...s, activity: { ...s.activity, exercise: fix(s.activity.exercise, s.activity.exerciseId) } } : s;
+      return {
+        ...s,
+        entries: (s.entries || []).map((e) => ({
+          ...e,
+          exercise: fix(e.exercise, e.exerciseId),
+          plannedExercise: fix(e.plannedExercise, e.plannedExerciseId),
+        })),
+      };
+    });
+    return { ...data, exercises, sessions };
+  },
 };
 
 export const DATA_KEYS = ['exercises', 'programs', 'templates', 'sessions', 'measurements'];

@@ -161,6 +161,8 @@ export function toast(message, opts = {}) {
     opts.action ? h('button', { type: 'button', class: 'toast-action', onclick: () => { opts.action.run(); dismiss(); } }, opts.action.label) : null,
     h('button', { type: 'button', class: 'toast-close', 'aria-label': 'Dismiss', onclick: () => dismiss() }, icon('x')));
   host.append(el);
+  // Keep at most two toasts on screen; the oldest goes first.
+  while (host.children.length > 2) host.firstElementChild.remove();
   const timer = setTimeout(dismiss, opts.duration ?? (opts.action ? 6000 : 3500));
   function dismiss() {
     clearTimeout(timer);

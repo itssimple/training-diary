@@ -2,12 +2,12 @@ import * as store from '../store.js';
 import { h, btn, meter, emptyState } from '../ui.js';
 import { icon } from '../icons.js';
 import { onTick } from '../shell.js';
-import { startFromTemplate, startEmptyWorkout, exportAll } from '../actions.js';
-import { suggestNextTemplate, weekProgress, goalStreak, sessionSummary, sessionTitle, sessionElapsedSec, newRecordsIn, RECORD_LABELS } from '../model.js';
+import { startFromTemplate, startEmptyWorkout, shareBackup } from '../actions.js';
+import { backupDue, suggestNextTemplate, weekProgress, goalStreak, sessionSummary, sessionTitle, sessionElapsedSec, newRecordsIn, RECORD_LABELS } from '../model.js';
 import { fmtDuration, fmtDurationWords, fmtRelativeDay, fmtWeekday, fmtNum, plural, fmtDate } from '../util.js';
 import { formatRecordValue } from './progress.js';
 
-export function renderHome({ el }) {
+export function renderHome({ el, rerender }) {
   const s = store.state;
   const settings = s.settings;
   const active = store.activeSession();
@@ -102,13 +102,13 @@ export function renderHome({ el }) {
   // 4. Recent records (last 30 days)
   const recent = done.filter((x) => x.startedAt > now - 30 * 86400000).slice(0, 15);
   const prs = recent.flatMap((x) => newRecordsIn(x, done).map((r) => ({ ...r, date: x.startedAt })))
-    .filter((r) => r.key === 'maxWeightKg' || r.key === 'bestE1rmKg' || r.key === 'longestDistanceKm' || r.key === 'bestPaceSecPerKm' || r.key === 'maxReps')
+    .filter((r) => r.key === 'maxWeightKg' || r.key === 'leastAssistKg' || r.key === 'bestE1rmKg' || r.key === 'longestDistanceKm' || r.key === 'bestPaceSecPerKm' || r.key === 'maxReps')
     .slice(0, 4);
   if (prs.length) {
     side.append(h('section', { class: 'card', 'aria-labelledby': 'pr-title' },
       h('div', { class: 'card-head' }, h('h2', { id: 'pr-title' }, 'Recent records'), h('a', { href: '#/progress?tab=records', class: 'link-sm' }, 'All records')),
       h('ul', { class: 'pr-list' }, prs.map((r) => h('li', null, icon('trophy'),
-        h('span', null, h('strong', null, r.name), h('span', { class: 'muted small' }, ` ${RECORD_LABELS[r.key].toLowerCase()}: ${formatRecordValue(r.key, r.value, r.extra)} · ${fmtRelativeDay(r.date)}`)))))));
+        h('span', null, h('strong', null, r.name), h('span', { class: 'muted small' }, ` ${RECORD_LABELS[r.key].toLowerCase()}: ${formatRecordValue(r.key, r.value, r.extra, r.snap)} · ${fmtRelativeDay(r.date)}`)))))));
   }
 
   // 5. iPhone/iPad in a Safari tab: storage is deleted after 7 days of Safari use without
@@ -122,12 +122,12 @@ export function renderHome({ el }) {
 
   // 6. Backup reminder (data lives only on this device)
   const lastExport = settings.lastExportAt || null;
-  const stale = !lastExport || lastExport < now - 30 * 86400000;
-  if (done.length >= 3 && stale) {
-    side.append(h('section', { class: 'card notice-card', 'aria-labelledby': 'backup-title' },
-      h('h2', { id: 'backup-title' }, icon('download'), ' Back up your data'),
-      h('p', { class: 'small' }, `Your diary is stored only on this device. Last backup: ${lastExport ? fmtRelativeDay(lastExport).toLowerCase() : 'never'}.`),
-      btn('Export backup', () => exportAll(), { size: 'sm' })));
+  const backup = backupDue(store.state.sessions, settings, now);
+  if (backup.due) {
+    main.append(h('section', { class: 'card notice-card', 'aria-labelledby': 'backup-title' },
+      h('h2', { id: 'backup-title' }, icon('download'), ' Back up your diary'),
+      h('p', { class: 'small' }, `${plural(backup.pending, 'session')} recorded since your last backup (${lastExport ? fmtRelativeDay(lastExport).toLowerCase() : 'never'}). Your diary exists only on this phone.`),
+      btn('Back up now', async () => { await shareBackup(); rerender(); }, { size: 'sm', variant: 'primary', icon: 'upload' })));
   }
 
   if (tickEl) {

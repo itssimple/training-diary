@@ -4,14 +4,16 @@ import * as store from '../store.js';
 import { h, btn, iconBtn, pageHead, emptyState, select, segmented, numInput, input, field, toast, confirmDialog, openDialog } from '../ui.js';
 import { setQuery, navigate } from '../shell.js';
 import { timeChart } from '../charts.js';
-import { exerciseHistory, computeRecords, RECORD_LABELS, speedKmh, paceSecPerKm } from '../model.js';
+import { exerciseHistory, computeRecords, RECORD_LABELS, speedKmh, paceSecPerKm, fmtKg } from '../model.js';
 import { fmtDate, fmtDateShort, fmtDuration, fmtNum, plural, addDays, startOfDay, startOfWeek, isoDate, parseLocalDate, uid, num } from '../util.js';
 
 const RANGES = [['30', '1M'], ['90', '3M'], ['180', '6M'], ['365', '1Y'], ['all', 'All']];
 
-export function formatRecordValue(key, value, extra = {}) {
+export function formatRecordValue(key, value, extra = {}, snap = null) {
+  const kg = (v) => fmtKg(v, snap, (x) => fmtNum(x));
   switch (key) {
-    case 'maxWeightKg': return `${fmtNum(value)} kg${extra.reps ? ` × ${extra.reps}` : ''}`;
+    case 'maxWeightKg': return `${kg(value)}${extra.reps ? ` × ${extra.reps}` : ''}`;
+    case 'leastAssistKg': return `${kg(value)}${extra.reps ? ` × ${extra.reps}` : ''}`;
     case 'bestE1rmKg': return `${fmtNum(value, 1)} kg${extra.weightKg ? ` (from ${fmtNum(extra.weightKg)} kg × ${extra.reps})` : ''}`;
     case 'maxReps': return `${fmtNum(value, 0)} reps${extra.weightKg ? ` @ ${fmtNum(extra.weightKg)} kg` : ''}`;
     case 'maxSessionVolumeKg': return `${fmtNum(Math.round(value), 0)} kg`;
@@ -117,7 +119,14 @@ function strengthTab(body, query, charts) {
   const exId = list.some((e) => e.id === query.ex) ? query.ex : list[0].id;
   const ex = list.find((e) => e.id === exId);
   const type = ex.type;
-  const metrics = type === 'timed'
+  const lib = store.exerciseById(exId);
+  const allRows = exerciseHistory(store.state.sessions, exId);
+  const lower = lib ? !!lib.lowerIsBetter : !!allRows[allRows.length - 1]?.lowerIsBetter;
+  const perHand = (lib?.weightMode || 'total') === 'perHand';
+  const snap = { lowerIsBetter: lower, weightMode: perHand ? 'perHand' : 'total' };
+  const metrics = lower
+    ? [['weight', 'Assistance'], ['maxReps', 'Best set reps'], ['reps', 'Total reps'], ['sets', 'Sets']]
+    : type === 'timed'
     ? [['longest', 'Longest set'], ['sets', 'Sets']]
     : type === 'bodyweight'
       ? [['maxReps', 'Best set reps'], ['reps', 'Total reps'], ['weight', 'Added weight'], ['sets', 'Sets']]
@@ -125,26 +134,27 @@ function strengthTab(body, query, charts) {
   const metric = metrics.some(([k]) => k === query.metric) ? query.metric : metrics[0][0];
   const range = query.range || '180';
   const from = rangeStart(range);
-  const rows = exerciseHistory(store.state.sessions, exId).filter((r) => r.date >= from);
+  const rows = allRows.filter((r) => r.date >= from);
   const pick = {
     weight: (r) => r.topWeightKg, e1rm: (r) => r.bestE1rm, volume: (r) => r.volumeKg || null, reps: (r) => r.totalReps || null,
     maxReps: (r) => r.maxReps, sets: (r) => r.sets, longest: (r) => r.durationSec,
   }[metric];
   const META = {
-    weight: ['Top set weight', 'kg', (v) => fmtNum(v)], e1rm: ['Estimated 1RM', 'kg', (v) => fmtNum(v, 1)], volume: ['Volume (weight × reps)', 'kg', (v) => fmtNum(Math.round(v), 0)],
+    weight: lower ? ['Assistance (lower is better)', 'kg', (v) => fmtNum(v)] : ['Top set weight', perHand ? 'kg/hand' : 'kg', (v) => fmtNum(v)], e1rm: ['Estimated 1RM', 'kg', (v) => fmtNum(v, 1)], volume: ['Volume (weight × reps)', 'kg', (v) => fmtNum(Math.round(v), 0)],
     reps: ['Total reps', 'reps', (v) => fmtNum(v, 0)], maxReps: ['Most reps in one set', 'reps', (v) => fmtNum(v, 0)], sets: ['Sets completed', 'sets', (v) => fmtNum(v, 0)],
     longest: ['Total time under load', 's', (v) => fmtNum(v, 0)],
   }[metric];
-  const points = rows.map((r) => ({ x: r.date, y: pick(r), sessionId: r.sessionId })).filter((p) => Number.isFinite(p.y) && p.y > 0);
+  const invert = lower && metric === 'weight';
+  const points = rows.map((r) => ({ x: r.date, y: pick(r), sessionId: r.sessionId })).filter((p) => Number.isFinite(p.y) && (p.y > 0 || invert));
   body.append(controls(query, list, exId, metrics, metric, range));
   body.append(h('div', { class: 'progress-grid' },
     h('div', null,
-      chartPanel({ title: `${ex.name}: ${META[0]}`, points, unit: META[1], label: META[0], yFormat: META[2], charts, note: metric === 'e1rm' ? 'Epley estimate, sets of 1–12 reps' : null }),
-      trendSummary(points, (v) => `${META[2](v)} ${META[1]}`)),
-    sessionTable(rows, type)));
+      chartPanel({ title: `${ex.name}: ${META[0]}`, points, unit: META[1], label: META[0], yFormat: META[2], charts, reverseY: invert, note: metric === 'e1rm' ? 'Epley estimate, sets of 1–12 reps' : invert ? 'Axis inverted: up means less assistance' : metric === 'volume' && perHand ? 'Counts both dumbbells' : null }),
+      trendSummary(points, (v) => `${META[2](v)} ${META[1]}`, invert)),
+    sessionTable(rows, type, snap)));
 }
 
-function sessionTable(rows, type) {
+function sessionTable(rows, type, snap = null) {
   const wrap = h('section', { class: 'card', 'aria-label': 'Sessions in range' });
   wrap.append(h('div', { class: 'card-head' }, h('h2', null, 'Sessions'), h('span', { class: 'muted small' }, plural(rows.length, 'session'))));
   if (!rows.length) { wrap.append(h('p', { class: 'muted small' }, 'No sessions in this range.')); return wrap; }
@@ -166,7 +176,7 @@ function sessionTable(rows, type) {
         h('td', null, r.durationSec ? fmtDuration(r.durationSec) : '—'),
       ] : [
         h('td', null, String(r.sets)),
-        h('td', null, r.topWeightKg ? `${fmtNum(r.topWeightKg)} kg × ${r.topWeightReps ?? '?'}` : (r.maxReps ? `${r.maxReps} reps` : '—')),
+        h('td', null, Number.isFinite(r.topWeightKg) && (r.topWeightKg > 0 || snap?.lowerIsBetter) ? `${fmtKg(r.topWeightKg, snap, (v) => fmtNum(v))} × ${r.topWeightReps ?? '?'}` : (r.maxReps ? `${r.maxReps} reps` : '—')),
         h('td', null, r.volumeKg ? `${fmtNum(Math.round(r.volumeKg), 0)} kg` : '—'),
       ]))))));
   return wrap;
@@ -231,7 +241,7 @@ function recordsTab(body) {
       h('h2', null, r.name),
       h('dl', { class: 'kv' }, keys.flatMap((k) => [
         h('dt', null, RECORD_LABELS[k]),
-        h('dd', null, h('a', { href: `#/history/${r[k].sessionId}` }, formatRecordValue(k, r[k].value, r[k])), h('span', { class: 'muted small' }, ` · ${fmtDateShort(r[k].date)}`)),
+        h('dd', null, h('a', { href: `#/history/${r[k].sessionId}` }, formatRecordValue(k, r[k].value, r[k], r)), h('span', { class: 'muted small' }, ` · ${fmtDateShort(r[k].date)}`)),
       ]))));
   }
   body.append(grid);

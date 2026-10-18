@@ -234,12 +234,12 @@ await step('11. progress charts and empty states', async () => {
 let exportPath;
 await step('12. export and import data', async () => {
   await go('#/settings');
-  const [dl] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Export backup (JSON)' }).click()]);
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Download backup (JSON)' }).click()]);
   exportPath = join(tmp, 'backup.json');
   await dl.saveAs(exportPath);
   const json = JSON.parse(await readFile(exportPath, 'utf8'));
   expect(json.format === 'training-diary-export' && json.data.sessions.length === 3, `export has 3 sessions (got ${json.data.sessions.length})`);
-  await page.locator('input[type=file]').setInputFiles(exportPath);
+  await page.getByLabel('Choose backup file').setInputFiles(exportPath);
   await dialog().getByRole('button', { name: 'Replace all' }).click();
   await dialog().getByRole('button', { name: 'Replace' }).click();
   await page.waitForSelector('text=Backup imported.');
@@ -253,12 +253,12 @@ await step('13. invalid import is rejected and data is untouched', async () => {
   const badPath = join(tmp, 'bad.json');
   await writeFile(badPath, JSON.stringify(bad));
   await go('#/settings');
-  await page.locator('input[type=file]').setInputFiles(badPath);
+  await page.getByLabel('Choose backup file').setInputFiles(badPath);
   await dialog().locator('text=Import failed').waitFor();
   expect(/startedAt/.test(await dialog().innerText()), 'error names the field');
   await dialog().locator('.dialog-actions button', { hasText: 'Close' }).click();
   await writeFile(badPath, '{ nope');
-  await page.locator('input[type=file]').setInputFiles(badPath);
+  await page.getByLabel('Choose backup file').setInputFiles(badPath);
   await dialog().locator('text=not valid JSON').waitFor();
   await dialog().locator('.dialog-actions button', { hasText: 'Close' }).click();
   await go('#/history');
@@ -301,6 +301,171 @@ await step('16. theme switching and wide layout', async () => {
   await page.getByRole('button', { name: 'Light' }).isVisible().catch(() => {});
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
   expect(!overflow, 'no horizontal scroll on narrow screen');
+});
+
+const pad = (n) => String(n).padStart(2, '0');
+const localInput = (ts) => { const d = new Date(ts); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+
+await step('18. existing v1 data is migrated (per-hand dumbbells, assisted = lower is better)', async () => {
+  const ctx2 = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const p2 = await ctx2.newPage();
+  p2.on('pageerror', (e) => errors.push(e.message));
+  // Same origin, but no app code runs on this URL: seed a database exactly as version 1 stored it.
+  await p2.goto(`${BASE}manifest.webmanifest`);
+  await p2.evaluate(() => new Promise((resolve, reject) => {
+    const r = indexedDB.open('training-diary', 1);
+    r.onupgradeneeded = () => {
+      const db = r.result;
+      for (const s of ['exercises', 'programs', 'templates', 'sessions', 'measurements', 'settings', 'meta']) db.createObjectStore(s, { keyPath: 'id' });
+    };
+    r.onsuccess = () => {
+      const db = r.result;
+      const tx = db.transaction(['exercises', 'sessions', 'meta'], 'readwrite');
+      const now = Date.now();
+      tx.objectStore('meta').put({ id: 'meta', schemaVersion: 1, seededAt: now });
+      tx.objectStore('exercises').put({ id: 'ex_db_curl', name: 'Dumbbell biceps curl', type: 'strength', category: 'Arms', equipment: 'Dumbbell', muscles: [], alternativeIds: [], builtIn: true, archived: false });
+      tx.objectStore('exercises').put({ id: 'ex_assisted_pull_up', name: 'Assisted pull-up (machine)', type: 'strength', category: 'Back', equipment: 'Machine', muscles: [], alternativeIds: [], builtIn: true, archived: false });
+      tx.objectStore('sessions').put({
+        id: 'ses_v1', kind: 'workout', status: 'completed', name: 'Old arms day', startedAt: now - 86400000, endedAt: now - 86400000 + 3600000, pausedMs: 0, groups: [],
+        entries: [
+          { id: 'e1', exerciseId: 'ex_db_curl', exercise: { name: 'Dumbbell biceps curl', type: 'strength', equipment: 'Dumbbell' }, plannedExerciseId: 'ex_db_curl', plannedExercise: { name: 'Dumbbell biceps curl', type: 'strength' }, status: 'done', sets: [{ id: 's1', planned: null, actual: { weightKg: 12, reps: 10 }, done: true }] },
+          { id: 'e2', exerciseId: 'ex_assisted_pull_up', exercise: { name: 'Assisted pull-up (machine)', type: 'strength', equipment: 'Machine' }, plannedExerciseId: null, plannedExercise: null, status: 'done', sets: [{ id: 's2', planned: null, actual: { weightKg: 25, reps: 6 }, done: true }] },
+        ],
+      });
+      tx.oncomplete = () => { db.close(); resolve(); };
+      tx.onerror = () => reject(tx.error);
+    };
+    r.onerror = () => reject(r.error);
+  }));
+  await p2.goto(BASE);
+  await p2.waitForSelector('text=Your data was upgraded from format version 1');
+  await p2.goto(`${BASE}#/history/ses_v1`);
+  await p2.waitForSelector('text=10 × 12 kg/hand');
+  await p2.waitForSelector('text=6 × 25 kg assist');
+  expect(/240/.test(await p2.locator('.stat-row').first().innerText()), 'volume counts both dumbbells, assistance adds none');
+  const backup = await p2.evaluate(() => new Promise((resolve) => {
+    const r = indexedDB.open('training-diary');
+    r.onsuccess = () => { const g = r.result.transaction('meta').objectStore('meta').get('pre-migration-backup'); g.onsuccess = () => resolve(g.result?.fromVersion ?? null); };
+  }));
+  expect(backup === 1, 'a pre-migration copy of the data was kept');
+  await ctx2.close();
+});
+
+await step('19. warm-up sets, plate calculator and RPE', async () => {
+  await go('#/settings');
+  await page.getByLabel('Effort per set').selectOption('rpe');
+  await page.getByLabel(/Progression hints/).check();
+  await page.waitForTimeout(200);
+  await go('');
+  await page.getByRole('button', { name: 'Empty workout' }).click();
+  await page.waitForURL(/#\/workout/);
+  await dialog().getByLabel('Search exercises').fill('back squat');
+  await dialog().locator('.pick-row', { hasText: 'Barbell back squat' }).click();
+  await page.getByRole('button', { name: 'More actions for Barbell back squat' }).click();
+  await dialog().getByRole('button', { name: /Add warm-up sets/ }).click();
+  await dialog().getByLabel('First working weight').fill('100');
+  await dialog().getByRole('button', { name: 'Add warm-up sets' }).click();
+  await page.waitForSelector('text=Added 4 warm-up sets.');
+  expect(await page.locator('.wk-detail .set-row.kind-warmup').count() === 4, '4 warm-up rows');
+  expect((await page.locator('.wk-detail .set-row.kind-warmup .set-no').first().innerText()).trim() === 'W', 'warm-ups labelled W');
+  await page.getByRole('button', { name: 'Plates' }).click();
+  await dialog().getByLabel('Total weight').fill('100');
+  await dialog().locator('text=1 × 25 kg + 1 × 15 kg').waitFor();
+  await dialog().locator('.dialog-actions button', { hasText: 'Close' }).click();
+  await page.getByRole('button', { name: /Mark set 1 done/ }).click();
+  await page.getByRole('button', { name: 'Skip rest' }).click();
+  const work = page.locator('.wk-detail .set-row:not(.set-head)').nth(4);
+  await work.getByLabel(/Set 5 kg/).fill('100');
+  await work.getByLabel(/Set 5 reps/).fill('5');
+  await work.getByLabel(/Set 5 RPE/).selectOption('8');
+  await work.getByRole('button', { name: /Mark set 5 done/ }).click();
+  await page.waitForSelector('.wk-detail .set-row.done >> nth=1');
+  await shot(page, '19-warmups');
+  await page.locator('.finish-btn').click();
+  await dialog().getByRole('button', { name: 'Save workout' }).click();
+  await page.waitForURL(/#\/history\/ses_/);
+  await page.waitForSelector('text=5 × 100 kg @ RPE 8');
+  await page.waitForSelector('.sets-table abbr:has-text("W")');
+  expect(/1 of 3 sets done · 4 warm-up sets/.test(await page.locator('.entry-detail').first().innerText()), 'detail counts working sets and lists warm-ups separately');
+  expect(/\b1\b[\s\S]*of 3 sets/.test(await page.locator('.stat-row').first().innerText()), 'set count ignores warm-ups');
+});
+
+await step('20. add a past workout, edit its date, and get a progression hint from it', async () => {
+  await go('#/history');
+  await page.getByRole('button', { name: 'Past workout' }).click();
+  await dialog().getByLabel('Workout').selectOption({ label: 'Starter: full body A/B – Full body B' });
+  await dialog().getByLabel('Started').fill(localInput(Date.now() - 5 * 60000));
+  await dialog().getByRole('button', { name: 'Continue' }).click();
+  await page.waitForURL(/\?edit=1/);
+  const rows = page.locator('.wk-detail .set-row:not(.set-head)');
+  const n = await rows.count();
+  for (let i = 1; i <= n; i++) {
+    const r = rows.nth(i - 1);
+    await r.getByLabel(new RegExp(`Set ${i} kg`)).fill('100');
+    await r.getByLabel(new RegExp(`Set ${i} reps`)).fill('12');
+    await r.getByRole('button', { name: new RegExp(`Mark set ${i} done`) }).click();
+    await page.waitForSelector(`.wk-detail .set-row.done >> nth=${i - 1}`);
+  }
+  await page.getByRole('button', { name: 'Date & time' }).click();
+  await dialog().getByLabel('Duration').fill('45');
+  await dialog().getByRole('button', { name: 'Save' }).click();
+  await page.waitForSelector('.wk-stats:has-text("45:00")');
+  await page.getByRole('link', { name: 'Done editing' }).click();
+  await page.waitForSelector('.entry-detail:has(h3:text("Romanian deadlift")):has-text("Completed")');
+  // Rep range in the template, then the hint appears in the next workout.
+  // (Full body B / Romanian deadlift: no earlier step records it, so the past workout is "last time".)
+  await go('#/train/template/tpl_starter_b');
+  await page.locator('.tpl-item', { hasText: 'Romanian deadlift' }).getByLabel('Reps to').fill('12');
+  await page.waitForTimeout(700);
+  await go('#/train');
+  await page.getByRole('button', { name: 'Start Full body B' }).click();
+  await page.waitForURL(/#\/workout/);
+  await page.waitForSelector('.hint-card:has-text("Consider 102.5 kg")');
+  await page.getByRole('button', { name: 'Plan 102.5 kg for remaining sets' }).click();
+  await page.waitForSelector('.wk-detail .col-plan:has-text("10–12 × 102.5 kg")');
+  await shot(page, '20-hint');
+  await page.getByRole('button', { name: 'Workout options' }).click();
+  await dialog().getByRole('button', { name: 'Discard workout' }).click();
+  await dialog().getByRole('button', { name: 'Discard workout' }).click();
+  await page.waitForSelector('text=Workout discarded.');
+});
+
+await step('21. calendar view', async () => {
+  await go('#/history?view=cal');
+  await page.waitForSelector('.cal-day.has');
+  await page.locator('.cal-day.today').click();
+  expect(await page.locator('.calendar .hist-row').count() >= 2, 'today lists its sessions');
+  await shot(page, '21-calendar');
+});
+
+await step('22. import history from CSV (and re-import is skipped)', async () => {
+  const { exampleCsv } = await import('../../js/csv-import.js');
+  const csvPath = join(tmp, 'old-diary.csv');
+  await writeFile(csvPath, exampleCsv());
+  await go('#/settings');
+  await page.getByLabel('Choose CSV file').setInputFiles(csvPath);
+  await dialog().locator('text=1 workout with 6 sets').waitFor();
+  await dialog().getByRole('button', { name: 'Import 1 workout' }).click();
+  await page.waitForSelector('text=Imported 1 workout.');
+  await go('#/history');
+  await page.waitForSelector('.hist-row:has(.badge:text("Imported"))');
+  await go('#/settings');
+  await page.getByLabel('Choose CSV file').setInputFiles(csvPath);
+  await dialog().locator('text=already in your diary').waitFor();
+  await dialog().getByRole('button', { name: 'Cancel' }).click();
+});
+
+await step('23. backup reminder by session count', async () => {
+  await go('#/settings');
+  await page.getByLabel('Remind me to back up after').fill('1');
+  await page.getByLabel('Remind me to back up after').press('Tab');
+  await page.waitForTimeout(200);
+  await go('');
+  await page.waitForSelector('#backup-title');
+  // Headless Chromium cannot share files, so this exercises the download fallback.
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Back up now' }).click()]);
+  expect(/training-diary-backup-.*\.json/.test(dl.suggestedFilename()), 'backup file downloaded');
+  await page.waitForSelector('#backup-title', { state: 'detached' });
 });
 
 await step('17. discard workout and delete all data require confirmation', async () => {

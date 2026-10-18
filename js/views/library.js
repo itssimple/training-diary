@@ -4,7 +4,7 @@ import * as store from '../store.js';
 import { h, append, btn, iconBtn, pageHead, field, input, select, textarea, numInput, checkbox, toast, confirmDialog, openDialog, emptyState, segmented } from '../ui.js';
 import { icon } from '../icons.js';
 import { navigate, setQuery } from '../shell.js';
-import { EXERCISE_TYPES, CATEGORIES, EQUIPMENT, MUSCLES } from '../model.js';
+import { EXERCISE_TYPES, CATEGORIES, EQUIPMENT, MUSCLES, WEIGHT_MODES } from '../model.js';
 import { uid, num, plural } from '../util.js';
 
 export function trainTabs(active) {
@@ -95,7 +95,7 @@ export function renderExercise({ el, params, query }) {
 export function exerciseForm(existing, { onSaved, onDeleted, compact = false, presetName = '' } = {}) {
   const ex = existing ? structuredClone(existing) : {
     id: uid('ex'), name: presetName, description: '', category: 'Other', equipment: 'Other', type: 'strength', muscles: [],
-    instructions: '', notes: '', alternativeIds: [], defaultRestSec: null, cardioDisplay: null, isActivity: false, archived: false, meta: [],
+    instructions: '', notes: '', alternativeIds: [], defaultRestSec: null, cardioDisplay: null, isActivity: false, archived: false, meta: [], weightMode: 'total', lowerIsBetter: false,
   };
   const form = h('form', { class: 'form', novalidate: true });
   const err = h('p', { class: 'form-error', role: 'alert', hidden: true });
@@ -106,6 +106,14 @@ export function exerciseForm(existing, { onSaved, onDeleted, compact = false, pr
   const cardioDisplay = select([['pace', 'Pace (min/km), e.g. running, walking'], ['speed', 'Speed (km/h), e.g. cycling']], ex.cardioDisplay || 'pace');
   const cardioField = field('Show', cardioDisplay);
   const rest = numInput(ex.defaultRestSec, { integer: true, placeholder: 'App default' });
+  const weightMode = select(Object.entries(WEIGHT_MODES), ex.weightMode || 'total');
+  const increment = numInput(ex.incrementKg, { placeholder: 'auto' });
+  let lowerIsBetter = !!ex.lowerIsBetter;
+  const weightBox = h('fieldset', { class: 'fieldset' }, h('legend', null, 'Weight'),
+    h('div', { class: 'grid-2' },
+      field('Weight is entered as', weightMode, { hint: 'Per hand: enter one dumbbell. Volume counts both.' }),
+      field('Weight step', increment, { unit: 'kg', hint: 'Used for progression hints. Auto: 2.5 (2 per hand).' })),
+    checkbox('Lower weight is better (assisted exercises, e.g. assisted pull-up machine)', lowerIsBetter, (v) => { lowerIsBetter = v; }));
   const desc = textarea(ex.description, { rows: 2, maxlength: 500 });
   const instructions = textarea(ex.instructions, { rows: 3, maxlength: 2000 });
   const notes = textarea(ex.notes, { rows: 2, maxlength: 2000, placeholder: 'e.g. seat height 4, handle position' });
@@ -114,7 +122,10 @@ export function exerciseForm(existing, { onSaved, onDeleted, compact = false, pr
   const meta = (ex.meta || []).map((m) => ({ ...m }));
   let isActivity = !!ex.isActivity;
 
-  const syncType = () => { cardioField.hidden = type.value !== 'cardio'; };
+  const syncType = () => {
+    cardioField.hidden = type.value !== 'cardio';
+    weightBox.hidden = !['strength', 'bodyweight'].includes(type.value);
+  };
   type.addEventListener('change', syncType);
   syncType();
 
@@ -147,6 +158,7 @@ export function exerciseForm(existing, { onSaved, onDeleted, compact = false, pr
     err,
     field('Name', name),
     h('div', { class: 'grid-2' }, field('Measured as', type), cardioField),
+    weightBox,
     h('div', { class: 'grid-2' }, field('Category', category), field('Equipment', equipment)),
     compact ? null : h('fieldset', { class: 'fieldset' }, h('legend', null, 'Muscle groups (optional)'), muscleChips),
     field('Default rest', rest, { unit: 'seconds', hint: 'Overrides the app default rest timer for this exercise.' }),
@@ -205,6 +217,9 @@ export function exerciseForm(existing, { onSaved, onDeleted, compact = false, pr
       equipment: equipment.value,
       cardioDisplay: type.value === 'cardio' ? cardioDisplay.value : null,
       defaultRestSec: restVal === null ? null : Math.round(restVal),
+      weightMode: weightMode.value,
+      lowerIsBetter,
+      incrementKg: num(increment.value) > 0 ? num(increment.value) : null,
       description: compact ? ex.description : desc.value.trim(),
       instructions: compact ? ex.instructions : instructions.value.trim(),
       notes: compact ? ex.notes : notes.value.trim(),
