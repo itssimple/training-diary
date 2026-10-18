@@ -111,7 +111,16 @@ export function renderHome({ el }) {
         h('span', null, h('strong', null, r.name), h('span', { class: 'muted small' }, ` ${RECORD_LABELS[r.key].toLowerCase()}: ${formatRecordValue(r.key, r.value, r.extra)} · ${fmtRelativeDay(r.date)}`)))))));
   }
 
-  // 5. Backup reminder (data lives only on this device)
+  // 5. iPhone/iPad in a Safari tab: storage is deleted after 7 days of Safari use without
+  // visiting the site. Home Screen web apps are exempt, so push for installation.
+  if ('standalone' in navigator && navigator.standalone === false) {
+    main.prepend(h('section', { class: 'card notice-card', role: 'note', 'aria-labelledby': 'ios-title' },
+      h('h2', { id: 'ios-title' }, icon('warn'), ' Add this app to your Home Screen'),
+      h('p', { class: 'small' }, 'In a Safari tab, iOS deletes this diary after 7 days of using Safari without opening it. Apps on the Home Screen are exempt.'),
+      h('p', { class: 'small' }, 'Tap Share, then "Add to Home Screen", and from now on open the app from that icon. Data in this Safari tab is not moved over automatically: export a backup here first and import it in the installed app if you already have data.')));
+  }
+
+  // 6. Backup reminder (data lives only on this device)
   const lastExport = settings.lastExportAt || null;
   const stale = !lastExport || lastExport < now - 30 * 86400000;
   if (done.length >= 3 && stale) {

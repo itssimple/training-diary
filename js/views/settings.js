@@ -97,7 +97,7 @@ export function renderSettings({ el, rerender }) {
   // whether the app is installed (and, in Chrome, how much it is used). Firefox asks.
   const persistHelp = h('p', { class: 'notice small', hidden: true }, icon('info'), h('span', null, installed
     ? 'Your browser has not granted persistent storage yet. Most browsers do not ask you; they decide on their own, for example based on how often you use the app. The app asks again automatically. Your data is still saved, but keep exporting backups.'
-    : 'Most browsers never show a question for this. They decide on their own and usually only grant it to apps installed on the home screen. Install the app (Android: browser menu → Install app; iPhone: Safari → Share → Add to Home Screen) and open it from the home screen. On iPhone this also matters because Safari can delete data from websites you have not used for 7 days; installed home-screen apps are exempt.'));
+    : 'Most browsers never show a question for this. They decide on their own and usually only grant it to apps installed on the home screen. Install the app (Android: browser menu → Install app; iPhone: Safari → Share → Add to Home Screen) and open it from the home screen. On iPhone this matters even more: in a Safari tab, Safari deletes the data after 7 days of using Safari without opening this app. Apps added to the Home Screen are exempt.'));
   const persistBtn = btn('Ask browser to keep data', async () => {
     const ok = await requestPersistence();
     toast(ok ? 'Granted: the browser will keep this data unless you clear it yourself.' : 'Not granted. The browser decided without asking. See the note below.', { duration: 6000 });
