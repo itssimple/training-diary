@@ -1,7 +1,7 @@
 // Exercise library: list, editor and the reusable exercise picker.
 
 import * as store from '../store.js';
-import { h, btn, iconBtn, pageHead, field, input, select, textarea, numInput, checkbox, toast, confirmDialog, openDialog, emptyState, segmented } from '../ui.js';
+import { h, append, btn, iconBtn, pageHead, field, input, select, textarea, numInput, checkbox, toast, confirmDialog, openDialog, emptyState, segmented } from '../ui.js';
 import { icon } from '../icons.js';
 import { navigate, setQuery } from '../shell.js';
 import { EXERCISE_TYPES, CATEGORIES, EQUIPMENT, MUSCLES } from '../model.js';
@@ -142,7 +142,8 @@ export function exerciseForm(existing, { onSaved, onDeleted, compact = false, pr
   };
   drawMeta();
 
-  form.append(
+  // append() from ui.js skips null; native form.append() would render the text "null".
+  append(form, [
     err,
     field('Name', name),
     h('div', { class: 'grid-2' }, field('Measured as', type), cardioField),
@@ -160,7 +161,7 @@ export function exerciseForm(existing, { onSaved, onDeleted, compact = false, pr
       }, { icon: 'plus', size: 'sm' })),
     compact ? null : h('fieldset', { class: 'fieldset' }, h('legend', null, 'Custom fields (optional)'), metaList,
       btn('Add field', () => { meta.push({ key: '', value: '' }); drawMeta(); }, { icon: 'plus', size: 'sm' })),
-  );
+  ]);
 
   const actions = h('div', { class: 'form-actions' });
   actions.append(btn(existing ? 'Save changes' : 'Create exercise', null, { variant: 'primary', type: 'submit' }));

@@ -323,6 +323,31 @@ await step('17. discard workout and delete all data require confirmation', async
   await page.waitForSelector('text=No history yet');
 });
 
+await step('no "null"/"undefined"/"NaN" text on any screen', async () => {
+  const leaked = async () => page.evaluate(() => {
+    const out = [];
+    const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    for (let n = w.nextNode(); n; n = w.nextNode()) {
+      if (/\b(null|undefined|NaN)\b/.test(n.nodeValue) && n.parentElement?.closest('script,style,noscript') === null) out.push(n.nodeValue.trim().slice(0, 60));
+    }
+    return out;
+  });
+  const routes = ['', '#/train', '#/library', '#/library/new', '#/library/ex_bench_press', '#/history', '#/progress', '#/progress?tab=cardio', '#/progress?tab=records', '#/progress?tab=body', '#/settings', '#/activity/new', '#/train/template/tpl_starter_a', '#/train/program/prg_starter'];
+  for (const r of routes) {
+    await go(r);
+    const found = await leaked();
+    expect(!found.length, `${r || 'home'}: ${found.join(' | ')}`);
+  }
+  // The compact "create exercise" form inside the exercise picker (adding to a program/template).
+  await go('#/train/template/tpl_starter_a');
+  await page.getByRole('button', { name: 'Add exercise' }).click();
+  await dialog().getByRole('button', { name: 'Create new exercise' }).click();
+  await dialog().getByRole('button', { name: 'Create exercise' }).waitFor();
+  const found = await leaked();
+  expect(!found.length, `exercise picker create form: ${found.join(' | ')}`);
+  await dialog().getByRole('button', { name: 'Close' }).first().click();
+});
+
 await step('no uncaught page errors', async () => {
   const real = errors.filter((e) => !/net::ERR_INTERNET_DISCONNECTED|Failed to fetch|Failed to load resource/.test(e));
   expect(real.length === 0, real.join('\n'));

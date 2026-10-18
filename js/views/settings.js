@@ -8,7 +8,7 @@ import { exportAll } from '../actions.js';
 import { parseImport, mergeData } from '../backup.js';
 import { buildWeeklyIcs } from '../ics.js';
 import { storageInfo, requestPersistence } from '../db.js';
-import { wakeLockSupported } from '../device.js';
+import { wakeLockSupported, isInstalledApp } from '../device.js';
 import { APP_VERSION } from '../version.js';
 import { num, fmtNum, plural, fmtDate } from '../util.js';
 
@@ -92,23 +92,30 @@ export function renderSettings({ el, rerender }) {
 
   // Data
   const storageEl = h('p', { class: 'small muted' }, 'Checking storage…');
+  const installed = isInstalledApp();
+  // Chrome and Safari never show a prompt for this: they decide silently, mostly based on
+  // whether the app is installed (and, in Chrome, how much it is used). Firefox asks.
+  const persistHelp = h('p', { class: 'notice small', hidden: true }, icon('info'), h('span', null, installed
+    ? 'Your browser has not granted persistent storage yet. Most browsers do not ask you; they decide on their own, for example based on how often you use the app. The app asks again automatically. Your data is still saved, but keep exporting backups.'
+    : 'Most browsers never show a question for this. They decide on their own and usually only grant it to apps installed on the home screen. Install the app (Android: browser menu → Install app; iPhone: Safari → Share → Add to Home Screen) and open it from the home screen. On iPhone this matters even more: in a Safari tab, Safari deletes the data after 7 days of using Safari without opening this app. Apps added to the Home Screen are exempt.'));
   const persistBtn = btn('Ask browser to keep data', async () => {
     const ok = await requestPersistence();
-    toast(ok ? 'The browser will keep this data unless you clear it.' : 'The browser did not grant persistent storage. Regular exports are your safety net.');
+    toast(ok ? 'Granted: the browser will keep this data unless you clear it yourself.' : 'Not granted. The browser decided without asking. See the note below.', { duration: 6000 });
     showStorage();
   }, { size: 'sm', variant: 'ghost' });
   async function showStorage() {
     const s = await storageInfo();
     const used = s.usage !== null ? `${fmtNum(s.usage / 1024 / 1024, 1)} MB used` : 'Usage unknown';
-    storageEl.textContent = `${used}. Persistent storage: ${s.persisted === null ? 'unknown' : s.persisted ? 'granted' : 'not granted'}.`;
+    storageEl.textContent = `${used}. Persistent storage: ${s.persisted === null ? 'not supported by this browser' : s.persisted ? 'granted' : 'not granted'}.`;
     persistBtn.hidden = s.persisted !== false;
+    persistHelp.hidden = s.persisted !== false;
   }
   showStorage();
   const fileInput = h('input', { type: 'file', accept: 'application/json,.json', class: 'sr-only', 'aria-label': 'Choose backup file', onchange: (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) importFile(f); } });
   const lastExport = st.lastExportAt ? fmtDate(st.lastExportAt) : 'never';
   grid.append(section('Your data',
     h('p', { class: 'small' }, 'Everything is stored only in this browser on this device. Nothing is uploaded, synced or backed up automatically. Clearing browser data or uninstalling the app can delete it. Exporting a backup regularly is your responsibility.'),
-    storageEl, persistBtn,
+    storageEl, persistHelp, persistBtn,
     h('p', { class: 'small' }, `Last export: ${lastExport}. ${plural(store.completedSessions().length, 'session')}, ${plural(store.state.exercises.length, 'exercise')}, ${plural(store.state.measurements.length, 'measurement')}.`),
     h('div', { class: 'form-actions' },
       btn('Export backup (JSON)', () => exportAll().then(rerender), { variant: 'primary', icon: 'download' }),
