@@ -4,7 +4,7 @@
 import * as store from '../store.js';
 import { h, append, btn, pageHead, field, textarea, select, checkbox, toast, confirmDialog, openDialog, downloadFile, readFileText } from '../ui.js';
 import { icon } from '../icons.js';
-import { buildCoachExport, coachPrompt, coachFileName, extractPlan, reviewPlan, applyPlan, dependenciesOf, dependentsOf, describeItems, buildExerciseExport, exercisePrompt, exercisesNeedingDetails, missingDetails } from '../coach.js';
+import { exerciseFileName, buildCoachExport, coachPrompt, coachFileName, extractPlan, reviewPlan, applyPlan, dependenciesOf, dependentsOf, describeItems, buildExerciseExport, exercisePrompt, exercisesNeedingDetails, missingDetails } from '../coach.js';
 import { APP_VERSION } from '../version.js';
 import { fmtDate, plural, fmtNum } from '../util.js';
 
@@ -48,7 +48,7 @@ export function renderCoach({ el, rerender, query }) {
   };
   weeks.addEventListener('change', updateSize);
   goals.addEventListener('input', updateSize);
-  const remember = async (exp) => { await store.saveSettings({ coachGoals: goals.value.trim(), lastCoachExport: { id: exp.exportId, at: Date.now() } }); };
+  const remember = async (exp) => { await store.saveSettings({ coachGoals: goals.value.trim() }); await rememberExport(exp); };
 
   el.append(h('section', { class: 'card form narrow', 'aria-labelledby': 'coach-export' },
     h('h2', { id: 'coach-export' }, '1. Training advice'),
@@ -110,7 +110,7 @@ export function renderCoach({ el, rerender, query }) {
     result.replaceChildren();
     const ex = extractPlan(answer.value);
     if (!ex.ok) { result.append(h('p', { class: 'form-error', role: 'alert' }, ex.error)); return; }
-    const review = reviewPlan(ex.plan, store.snapshotData(), { lastExport: store.state.settings.lastCoachExport });
+    const review = reviewPlan(ex.plan, store.snapshotData(), { lastExport: store.state.settings.lastCoachExport, exports: store.state.settings.recentCoachExports });
     if (!review.ok) { result.append(h('ul', { class: 'error-list form-error' }, review.errors.map((e) => h('li', null, e)))); return; }
     renderReview(review);
   }
@@ -214,6 +214,15 @@ export function renderCoach({ el, rerender, query }) {
   }
 }
 
+const BATCH = 10;
+
+/** Remember an export so answers made from it (even from earlier batches) are recognised. */
+async function rememberExport(exp) {
+  const prev = store.state.settings.recentCoachExports || [];
+  const entry = { id: exp.exportId, at: Date.now() };
+  await store.saveSettings({ lastCoachExport: entry, recentCoachExports: [...prev, entry].slice(-20) });
+}
+
 const GAP_LABEL = { description: 'description', instructions: 'how-to', muscles: 'muscles', primaryMuscles: 'main muscles', cues: 'cues', commonMistakes: 'mistakes' };
 
 /** Pick exercises and copy a prompt that asks the AI to fill in their details. */
@@ -225,7 +234,7 @@ function exerciseDetailsSection(query) {
   let showAll = !!only && !needing.has(only);
   const listEl = h('ul', { class: 'coach-ex-list' });
   const count = h('p', { class: 'muted small', 'aria-live': 'polite' });
-  const copyBtn = btn('Copy prompt with exercises', null, { variant: 'primary', icon: 'copy', block: true });
+  const actionsEl = h('div', { class: 'coach-batches' });
   const draw = () => {
     const shown = all.filter((e) => showAll || needing.has(e.id) || selected.has(e.id));
     listEl.replaceChildren(...shown.map((e) => {
@@ -239,22 +248,30 @@ function exerciseDetailsSection(query) {
     if (!shown.length) listEl.append(h('li', { class: 'muted small' }, 'All your exercises have details. Tick "Show all exercises" to improve existing ones.'));
     sync();
   };
+  // Big selections are split: chat apps cut off long pastes, and an AI cannot write details for
+  // dozens of exercises in one answer without hitting its length limit.
   const sync = () => {
-    count.textContent = `${plural(selected.size, 'exercise')} selected`;
-    copyBtn.disabled = selected.size === 0;
+    const ids = all.map((e) => e.id).filter((id) => selected.has(id));
+    const batches = [];
+    for (let i = 0; i < ids.length; i += BATCH) batches.push(ids.slice(i, i + BATCH));
+    count.textContent = `${plural(selected.size, 'exercise')} selected${batches.length > 1 ? `, sent in ${batches.length} batches of up to ${BATCH}. Import each answer before sending the next batch.` : ''}`;
+    actionsEl.replaceChildren(...batches.map((batch, i) => {
+      const n = batches.length > 1 ? i + 1 : null;
+      const make = async () => { const exp = buildExerciseExport(store.snapshotData(), batch, { appVersion: APP_VERSION }); await rememberExport(exp); return exp; };
+      return h('div', { class: 'coach-batch' },
+        n ? h('p', { class: 'small' }, h('strong', null, `Batch ${n} of ${batches.length}`), ` · ${batch.map((id) => store.exerciseById(id)?.name).join(', ')}`) : null,
+        h('div', { class: 'form-actions' },
+          btn(n ? `Copy prompt ${n} with data` : 'Copy prompt with exercises', async () => copyText(exercisePrompt(await make()), 'Prompt with exercises'), { variant: 'primary', icon: 'copy' }),
+          btn('Download file', async () => { const exp = await make(); downloadFile(exerciseFileName(exp, n), JSON.stringify(exp, null, 1)); toast('File downloaded. Attach it in your AI chat, then copy the prompt for the file.'); }, { icon: 'download', size: 'sm' }),
+          btn('Copy prompt for file', async () => { const exp = buildExerciseExport(store.snapshotData(), batch, { appVersion: APP_VERSION }); await copyText(exercisePrompt(exp, { embedData: false, fileName: exerciseFileName(exp, n) }), 'Prompt'); }, { icon: 'copy', size: 'sm', variant: 'ghost' })));
+    }));
   };
-  copyBtn.addEventListener('click', async () => {
-    if (!selected.size) return;
-    const exp = buildExerciseExport(store.snapshotData(), [...selected], { appVersion: APP_VERSION });
-    await store.saveSettings({ lastCoachExport: { id: exp.exportId, at: Date.now() } });
-    await copyText(exercisePrompt(exp), 'Prompt with exercises');
-  });
   const sec = h('section', { class: 'card form narrow', id: 'coach-exercises', 'aria-labelledby': 'coach-ex-title' },
     h('h2', { id: 'coach-ex-title' }, '2. Fill in exercise details'),
     h('p', { class: 'small' }, 'For exercises you added yourself: the AI writes the description, how-to steps, cues and common mistakes, sets the muscles for the muscle map, and suggests alternatives from your library. You review everything before it is saved.'),
     checkbox('Show all exercises (also complete ones)', showAll, (v) => { showAll = v; draw(); }),
-    listEl, count, copyBtn,
-    h('p', { class: 'muted small' }, 'Paste the prompt into any AI chat, then import its answer in step 3.'));
+    listEl, count, actionsEl,
+    h('p', { class: 'muted small' }, '"Copy prompt with data" works in any chat. If your chat cuts off long pastes, use "Download file", attach it, and paste "Copy prompt for file". Then import the answer in step 3.'));
   draw();
   if (query.section === 'exercises') setTimeout(() => sec.scrollIntoView({ block: 'start' }), 50);
   return sec;

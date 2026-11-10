@@ -270,3 +270,28 @@ test('exercise details: detect gaps, export only chosen exercises, prompt', () =
   assert.deepEqual(C.missingDetails(row), []);
   assert.deepEqual(C.exercisesNeedingDetails(out.exercises), []);
 });
+
+test('exercise prompt can refer to a file; cut-off answers are explained', () => {
+  const d = fixture();
+  const exp = C.buildExerciseExport(d, ['ex_bench_press'], { now: NOW, exportId: 'exp_f' });
+  const p = C.exercisePrompt(exp, { embedData: false, fileName: 'x.json' });
+  assert.match(p, /Attached is the file "x\.json"/);
+  assert.ok(!p.includes('"exportId":"exp_f"'), 'data not embedded');
+  assert.equal(C.exerciseFileName(exp, 2), 'training-diary-exercises-2026-11-10-part-2.json');
+  const cut = 'Sure!\n```json\n{"format": "training-diary-plan", "version": 1, "exercises": {"update": [{"id": "ex_bench_press", "changes": {"cues": "Brace';
+  assert.match(C.extractPlan(cut).error, /cut off/);
+  const ok = 'Text\n```json\n{"format":"training-diary-plan","version":1}\n```\nmore';
+  assert.equal(C.extractPlan(ok).ok, true, 'normal answers unaffected');
+});
+
+test('answers from any recent export (batches) are recognised', () => {
+  const d = fixture();
+  const plan = { format: C.PLAN_FORMAT, version: 1, basedOnExportId: 'exp_batch1', exercises: { update: [{ id: 'ex_bench_press', changes: { description: 'Flat barbell press.' }, reason: 'x' }] } };
+  const exports = [{ id: 'exp_batch1', at: NOW }, { id: 'exp_batch2', at: NOW + 1 }];
+  const ok = C.reviewPlan(plan, d, { lastExport: exports[1], exports });
+  assert.ok(!ok.warnings.some((w) => /recent exports/.test(w)), 'earlier batch is fine');
+  const unknown = C.reviewPlan({ ...plan, basedOnExportId: 'exp_other' }, d, { lastExport: exports[1], exports });
+  assert.ok(unknown.warnings.some((w) => /not made from one of your recent exports/.test(w)));
+  const fileP = C.exercisePrompt(C.buildExerciseExport(d, ['ex_bench_press'], { now: NOW }), { embedData: false });
+  assert.match(fileP, /"basedOnExportId": "<exportId from the attached file>"/);
+});

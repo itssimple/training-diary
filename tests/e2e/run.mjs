@@ -626,6 +626,24 @@ await step('27. AI fills in details for an exercise I added', async () => {
   expect(await page.locator('.coach-ex-list input:checked').count() === 1, 'only that exercise');
   await page.waitForTimeout(300);
   await shot(page, '27-exercise-details');
+  // Selecting everything splits into batches, each with its own file download.
+  await page.getByLabel('Show all exercises (also complete ones)').check();
+  const allBoxes = page.locator('.coach-ex-list input');
+  for (let i = 0; i < await allBoxes.count(); i++) await allBoxes.nth(i).check();
+  const total = await allBoxes.count();
+  await page.waitForSelector(`text=sent in ${Math.ceil(total / 10)} batches of up to 10`);
+  expect(await page.locator('.coach-batch').count() === Math.ceil(total / 10), 'one row per batch');
+  const [batchDl] = await Promise.all([page.waitForEvent('download'), page.locator('.coach-batch').nth(1).getByRole('button', { name: 'Download file' }).click()]);
+  expect(/exercises-.*-part-2\.json$/.test(batchDl.suggestedFilename()), 'batch file is numbered');
+  const batchPath = join(tmp, 'batch2.json');
+  await batchDl.saveAs(batchPath);
+  expect(JSON.parse(await readFile(batchPath, 'utf8')).exercisesToComplete.length === 10, 'ten exercises per batch');
+  await page.locator('.coach-batch').nth(1).getByRole('button', { name: 'Copy prompt for file' }).click();
+  await page.waitForSelector('text=Prompt copied');
+  expect(/Attached is the file "training-diary-exercises-.*-part-2\.json"/.test(await page.evaluate(() => navigator.clipboard.readText())), 'file prompt names the batch file');
+  // Back to only the new exercise.
+  for (let i = 0; i < total; i++) await allBoxes.nth(i).uncheck();
+  await page.locator('.coach-ex-list li', { hasText: 'Pendlay row' }).locator('input').check();
   await page.getByRole('button', { name: 'Copy prompt with exercises' }).click();
   await page.waitForSelector('text=Prompt with exercises copied');
   const prompt = await page.evaluate(() => navigator.clipboard.readText());

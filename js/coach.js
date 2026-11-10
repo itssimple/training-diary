@@ -316,10 +316,15 @@ export function buildExerciseExport(data, ids, { now = Date.now(), exportId = ui
 }
 
 /** Prompt asking the LLM to fill in exercise details; always includes the (small) data. */
-export function exercisePrompt(exp) {
+export function exerciseFileName(exp, batch = null) {
+  return `training-diary-exercises-${exp.exportedAt.slice(0, 10)}${batch ? `-part-${batch}` : ''}.json`;
+}
+
+/** embedData false: refer to an attached file instead of including the JSON (for big selections). */
+export function exercisePrompt(exp, { embedData = true, fileName = exerciseFileName(exp) } = {}) {
   const n = exp.exercisesToComplete.length;
   const example = {
-    format: PLAN_FORMAT, version: COACH_VERSION, basedOnExportId: exp.exportId,
+    format: PLAN_FORMAT, version: COACH_VERSION, basedOnExportId: embedData ? exp.exportId : '<exportId from the attached file>',
     summary: 'Filled in details for N exercises.',
     exercises: {
       update: [{
@@ -341,7 +346,7 @@ export function exercisePrompt(exp) {
       }],
     },
   };
-  return `You are an experienced strength coach and exercise instructor. I use an offline workout diary app. Below is a JSON export (format "${EXERCISE_EXPORT_FORMAT}") with ${n} exercise${n === 1 ? '' : 's'} from my library whose details I want completed ("exercisesToComplete"), and the rest of my library ("libraryForAlternatives").
+  return `You are an experienced strength coach and exercise instructor. I use an offline workout diary app. ${embedData ? 'Below is' : `Attached is the file "${fileName}", containing`} a JSON export (format "${EXERCISE_EXPORT_FORMAT}") with ${n} exercise${n === 1 ? '' : 's'} from my library whose details I want completed ("exercisesToComplete"), and the rest of my library ("libraryForAlternatives").
 
 ## Your task
 For each exercise in "exercisesToComplete", fill in the details that are missing (listed in its "missing" field) and fix details that are clearly wrong. Identify the exercise from its name, type and equipment. If a name is ambiguous, choose the most common gym version and say which one you assumed in the "reason".
@@ -373,12 +378,13 @@ Answer with one short sentence, then exactly ONE JSON code block shaped like thi
 ${JSON.stringify(example, null, 2)}
 \`\`\`
 
-## My exercises (${EXERCISE_EXPORT_FORMAT})
+${embedData ? `## My exercises (${EXERCISE_EXPORT_FORMAT})
 
 \`\`\`json
 ${JSON.stringify(exp)}
 \`\`\`
-`;
+` : `The data is in the attached file "${fileName}". Read the whole file before answering.
+`}`;
 }
 
 // ---------- reading the answer ----------
@@ -389,6 +395,9 @@ export function extractPlan(text) {
   if (!src) return { ok: false, error: 'The answer is empty. Paste the whole reply from the AI, including the JSON block.' };
   const candidates = [];
   for (const m of src.matchAll(/```(?:json|JSON)?\s*\n?([\s\S]*?)```/g)) candidates.push(m[1]);
+  // An odd number of ``` fences means the last block was never closed: the answer was cut off.
+  const fences = src.split('```').length - 1;
+  if (fences % 2 === 1) candidates.push(src.slice(src.lastIndexOf('```') + 3).replace(/^(?:json|JSON)?\s*\n?/, ''));
   if (!candidates.length) {
     const first = src.indexOf('{');
     const last = src.lastIndexOf('}');
@@ -402,7 +411,10 @@ export function extractPlan(text) {
       if (obj && typeof obj === 'object' && (obj.format === COACH_EXPORT_FORMAT || obj.format === EXERCISE_EXPORT_FORMAT)) lastErr = 'This is the data export, not the AI\'s answer. Paste the reply you got back from the AI.';
       else lastErr = lastErr || `Found JSON, but it is not a "${PLAN_FORMAT}" answer (format field missing or different).`;
     } catch (e) {
-      lastErr = lastErr || `The JSON in the answer is not valid (${e.message}). Ask the AI to "output only valid JSON in the required format".`;
+      const opens = (c.match(/[{[]/g) || []).length;
+      const closes = (c.match(/[}\]]/g) || []).length;
+      if (opens > closes) lastErr = 'The answer was cut off before the JSON ended (the AI hit its length limit). Ask for fewer exercises or changes at a time, or ask it to "continue the JSON" and paste the complete block.';
+      else lastErr = lastErr || `The JSON in the answer is not valid (${e.message}). Ask the AI to "output only valid JSON in the required format".`;
     }
   }
   return { ok: false, error: lastErr || 'No JSON block found in the answer. If the AI only gave advice, there is nothing to import.' };
@@ -455,9 +467,13 @@ export function reviewPlan(plan, data, ctx = {}) {
   for (const k of Object.keys(plan)) {
     if (!['format', 'version', 'basedOnExportId', 'summary', 'exercises', 'programs', 'templates', 'history', 'sessions', 'measurements', 'bodyMeasurements', 'settings', 'sets'].includes(k)) warnings.push(`Unknown section "${k}" was ignored.`);
   }
-  if (ctx.lastExport?.id && plan.basedOnExportId && plan.basedOnExportId !== ctx.lastExport.id) {
-    warnings.push('This answer was made from an older export than your latest one. Check the changes carefully.');
+  // ctx.exports: recent exports [{ id, at }] (batches make several); ctx.lastExport: the latest one.
+  const known = ctx.exports?.length ? ctx.exports : (ctx.lastExport ? [ctx.lastExport] : []);
+  const matched = plan.basedOnExportId ? known.find((x) => x.id === plan.basedOnExportId) : null;
+  if (known.length && plan.basedOnExportId && !matched) {
+    warnings.push('This answer was not made from one of your recent exports. Check the changes carefully.');
   }
+  const exportAt = matched?.at ?? ctx.lastExport?.at ?? null;
 
   const exercises = data.exercises || [];
   const programs = data.programs || [];
@@ -465,7 +481,7 @@ export function reviewPlan(plan, data, ctx = {}) {
   const exById = new Map(exercises.map((e) => [e.id, e]));
   const prById = new Map(programs.map((p) => [p.id, p]));
   const tpById = new Map(templates.map((t) => [t.id, t]));
-  const changedSince = (rec) => ctx.lastExport?.at && rec?.updatedAt && rec.updatedAt > ctx.lastExport.at;
+  const changedSince = (rec) => exportAt && rec?.updatedAt && rec.updatedAt > exportAt;
   const changes = [];
   const tempExercise = new Map(); // tempId -> change
   const tempProgram = new Map();
