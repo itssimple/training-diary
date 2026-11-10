@@ -609,6 +609,49 @@ await step('26. AI coach: export prompt + data, import reviewed plan, undo', asy
   expect(await page.locator('.hist-row').count() === historyCount, 'history still unchanged after undo');
 });
 
+await step('27. AI fills in details for an exercise I added', async () => {
+  const needCount = async () => { await go('#/library'); const t = await page.locator('a', { hasText: 'Fill details with AI' }).innerText(); return Number((/\((\d+)\)/.exec(t) || [0, 0])[1]); };
+  const before = await needCount();
+  await go('#/library/new');
+  await page.locator('.md-detail form').getByLabel('Name', { exact: true }).fill('Pendlay row');
+  await page.getByRole('button', { name: 'Create exercise' }).click();
+  await page.waitForSelector('h1:has-text("Pendlay row")');
+  const exId = decodeURIComponent(page.url().split('#/library/')[1].split('?')[0]);
+  expect(await needCount() === before + 1, 'library counts the new exercise as missing details');
+  await go(`#/library/${exId}`);
+  await page.getByRole('link', { name: 'Let an AI fill in the details' }).click();
+  await page.waitForURL(/section=exercises/);
+  const box = page.locator('.coach-ex-list li', { hasText: 'Pendlay row' }).locator('input');
+  expect(await box.isChecked(), 'the exercise is preselected');
+  expect(await page.locator('.coach-ex-list input:checked').count() === 1, 'only that exercise');
+  await page.waitForTimeout(300);
+  await shot(page, '27-exercise-details');
+  await page.getByRole('button', { name: 'Copy prompt with exercises' }).click();
+  await page.waitForSelector('text=Prompt with exercises copied');
+  const prompt = await page.evaluate(() => navigator.clipboard.readText());
+  const exp = JSON.parse(prompt.split('```json\n').pop().split('\n```')[0]);
+  expect(exp.exercisesToComplete.length === 1 && exp.exercisesToComplete[0].id === exId, 'prompt carries the chosen exercise');
+  const answer = {
+    format: 'training-diary-plan', version: 1, basedOnExportId: exp.exportId, summary: 'Filled in 1 exercise.',
+    exercises: { update: [{ id: exId, reason: 'Missing details', changes: {
+      description: 'Strict barbell row starting from the floor each rep.', category: 'Back', equipment: 'Barbell',
+      instructions: 'Bar on the floor over mid-foot\nHinge until your torso is near horizontal\nRow the bar to your lower chest\nLower it back to the floor', cues: 'Flat back\nExplode up', commonMistakes: 'Standing up during the set\nRounding the back',
+      muscles: ['Upper back', 'Lats', 'Lower back'], primaryMuscles: ['Upper back'], alternativeIds: ['ex_barbell_row', 'ex_seated_row'],
+    } }] },
+  };
+  await page.getByLabel('AI answer').fill(`Done.\n\`\`\`json\n${JSON.stringify(answer)}\n\`\`\``);
+  await page.getByRole('button', { name: 'Check answer' }).click();
+  await page.waitForSelector('.coach-change:has-text("Pendlay row") .coach-diff');
+  await page.getByRole('button', { name: 'Apply 1 change' }).click();
+  await page.waitForSelector('text=Applied 1 change');
+  await go(`#/library/${exId}`);
+  await page.waitForSelector('.ex-info ol.steps li:has-text("Row the bar to your lower chest")');
+  expect(await page.locator('.muscle-map .mm-primary[data-muscle="Upper back"]').count() === 2, 'muscle map shows the new primary muscle');
+  await page.waitForSelector('.ex-info a:has-text("Barbell row")');
+  expect(!(await page.getByRole('link', { name: 'Let an AI fill in the details' }).count()), 'no longer missing details');
+  expect(await needCount() === before, 'count back to where it was');
+});
+
 await step('17. discard workout and delete all data require confirmation', async () => {
   await go('');
   await page.getByRole('button', { name: 'Empty workout' }).click();

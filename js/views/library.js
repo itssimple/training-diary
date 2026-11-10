@@ -9,6 +9,7 @@ import { uid, num, plural, fmtDateShort } from '../util.js';
 import { muscleMapSvg, musclesFor } from '../muscle-map.js';
 import { fmtSetsCompact } from './workout.js';
 import { formatRecordValue } from './progress.js';
+import { exercisesNeedingDetails, missingDetails } from '../coach.js';
 
 export function trainTabs(active) {
   return h('nav', { class: 'tabs', 'aria-label': 'Train sections' },
@@ -59,8 +60,12 @@ function libraryList(query, selectedId) {
 }
 
 export function renderLibrary({ el, query }) {
+  const needDetails = exercisesNeedingDetails(store.state.exercises).length;
   el.append(pageHead('Exercises', {
-    actions: [h('a', { class: 'btn btn-primary', href: '#/library/new' }, icon('plus'), h('span', null, 'New'))],
+    actions: [
+      h('a', { class: 'btn btn-secondary', href: '#/coach?section=exercises' }, icon('progress'), h('span', null, `Fill details with AI${needDetails ? ` (${needDetails})` : ''}`)),
+      h('a', { class: 'btn btn-primary', href: '#/library/new' }, icon('plus'), h('span', null, 'New')),
+    ],
   }));
   el.append(trainTabs('library'));
   const md = h('div', { class: 'md' });
@@ -129,7 +134,10 @@ export function exerciseInfo(ex) {
       cueList.length ? h('section', { class: 'card' }, h('h2', null, icon('check'), ' Cues'), h('ul', { class: 'ticks' }, cueList.map((s) => h('li', null, s)))) : null,
       mistakeList.length ? h('section', { class: 'card' }, h('h2', null, icon('warn'), ' Common mistakes'), h('ul', { class: 'crosses' }, mistakeList.map((s) => h('li', null, s)))) : null));
   }
-  if (!steps.length && !cueList.length) wrap.append(h('p', { class: 'muted small' }, 'No instructions yet. Add them under Edit, or let the AI coach fill them in.'));
+  if (!ex.archived && exercisesNeedingDetails([ex]).length) {
+    wrap.append(h('p', { class: 'notice small' }, icon('info'), h('span', null, `Missing: ${missingDetails(ex).join(', ').replace('commonMistakes', 'common mistakes').replace('primaryMuscles', 'main muscles')}. `,
+      h('a', { href: `#/coach?section=exercises&ex=${encodeURIComponent(ex.id)}` }, 'Let an AI fill in the details'), ' or add them under Edit.')));
+  }
   if (ex.notes) wrap.append(h('section', { class: 'card' }, h('h2', null, 'Your notes'), h('p', { class: 'pre' }, ex.notes)));
   const last = lastPerformance(store.state.sessions, ex.id);
   const rec = computeRecords(store.state.sessions).get(ex.id);

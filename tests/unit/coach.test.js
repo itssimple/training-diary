@@ -237,3 +237,36 @@ test('applyPlan skips changes whose dependency was not selected', () => {
 test('describeItems', () => {
   assert.deepEqual(C.describeItems([{ exerciseName: 'Bench', sets: 3, reps: 6, repsMax: 8, weightKg: 70, groupId: 'g' }]), [{ exerciseId: undefined, group: 'g', text: 'Bench: 3 × 6–8 @ 70 kg' }]);
 });
+
+test('exercise details: detect gaps, export only chosen exercises, prompt', () => {
+  const d = fixture();
+  const custom = { id: 'ex_custom_row', name: 'Pendlay row', type: 'strength', category: 'Other', equipment: 'Other', muscles: [], primaryMuscles: [], instructions: '', cues: '', commonMistakes: '', description: '', archived: false };
+  const cardio = { id: 'ex_custom_ski', name: 'Ski erg', type: 'cardio', muscles: ['Cardiovascular'], primaryMuscles: ['Cardiovascular'], instructions: 'Pull', description: 'Ski erg.' };
+  d.exercises.push(custom, cardio, { ...custom, id: 'ex_old', name: 'Old', archived: true });
+  assert.deepEqual(C.missingDetails(custom), ['description', 'instructions', 'muscles', 'primaryMuscles', 'cues', 'commonMistakes']);
+  assert.deepEqual(C.missingDetails(cardio), [], 'cardio needs no cues/mistakes');
+  assert.deepEqual(C.missingDetails(d.exercises.find((e) => e.id === 'ex_bench_press')), ['description'], 'starter: only the optional description');
+  assert.deepEqual(C.exercisesNeedingDetails(d.exercises).map((e) => e.id), ['ex_custom_row'], 'starters are complete; archived ignored');
+  const exp = C.buildExerciseExport(d, ['ex_custom_row'], { now: NOW, exportId: 'exp_e' });
+  assert.equal(exp.format, C.EXERCISE_EXPORT_FORMAT);
+  assert.equal(exp.exercisesToComplete.length, 1);
+  assert.deepEqual(exp.exercisesToComplete[0].missing, C.missingDetails(custom));
+  assert.ok(exp.libraryForAlternatives.some((e) => e.id === 'ex_barbell_row'));
+  assert.ok(!exp.libraryForAlternatives.some((e) => e.id === 'ex_old' || e.id === 'ex_custom_row'));
+  const p = C.exercisePrompt(exp);
+  assert.match(p, /Only output exercise updates/);
+  assert.ok(p.includes('"id":"ex_custom_row"'), 'data embedded');
+  assert.match(C.extractPlan(JSON.stringify(exp)).error, /data export/);
+  // A typical answer goes through the normal review and apply.
+  const answer = { format: C.PLAN_FORMAT, version: 1, basedOnExportId: 'exp_e', exercises: { update: [{ id: 'ex_custom_row', changes: { description: 'Strict barbell row from the floor.', instructions: 'Set up\nRow\nReturn', cues: 'Flat back', commonMistakes: 'Jerking', muscles: ['Upper back', 'Lats', 'Lower back'], primaryMuscles: ['Upper back'], equipment: 'Barbell', category: 'Back', alternativeIds: ['ex_barbell_row', 'ex_unknown'] }, reason: 'Filled' }] } };
+  const r = C.reviewPlan(answer, d, { lastExport: { id: 'exp_e', at: NOW } });
+  const c = r.changes[0];
+  assert.equal(c.valid, true);
+  assert.deepEqual(c.patch.alternativeIds, ['ex_barbell_row']);
+  const out = C.applyPlan(d, r, [c.key], NOW);
+  const row = out.exercises.find((e) => e.id === 'ex_custom_row');
+  assert.equal(row.equipment, 'Barbell');
+  assert.deepEqual(row.primaryMuscles, ['Upper back']);
+  assert.deepEqual(C.missingDetails(row), []);
+  assert.deepEqual(C.exercisesNeedingDetails(out.exercises), []);
+});

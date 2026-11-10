@@ -4,7 +4,7 @@
 import * as store from '../store.js';
 import { h, append, btn, pageHead, field, textarea, select, checkbox, toast, confirmDialog, openDialog, downloadFile, readFileText } from '../ui.js';
 import { icon } from '../icons.js';
-import { buildCoachExport, coachPrompt, coachFileName, extractPlan, reviewPlan, applyPlan, dependenciesOf, dependentsOf, describeItems } from '../coach.js';
+import { buildCoachExport, coachPrompt, coachFileName, extractPlan, reviewPlan, applyPlan, dependenciesOf, dependentsOf, describeItems, buildExerciseExport, exercisePrompt, exercisesNeedingDetails, missingDetails } from '../coach.js';
 import { APP_VERSION } from '../version.js';
 import { fmtDate, plural, fmtNum } from '../util.js';
 
@@ -30,7 +30,7 @@ async function copyText(text, what) {
   }
 }
 
-export function renderCoach({ el, rerender }) {
+export function renderCoach({ el, rerender, query }) {
   const st = store.state.settings;
   el.append(pageHead('AI coach', { back: '#/progress', kicker: 'Works with any AI chat' }));
   el.append(h('p', { class: 'small narrow' }, 'Get training advice from the AI chat of your choice (ChatGPT, Claude, Gemini…). The app gives it your data and exact instructions, and can import the workout changes it suggests. You review every change first. Your recorded history is never changed.'));
@@ -51,7 +51,7 @@ export function renderCoach({ el, rerender }) {
   const remember = async (exp) => { await store.saveSettings({ coachGoals: goals.value.trim(), lastCoachExport: { id: exp.exportId, at: Date.now() } }); };
 
   el.append(h('section', { class: 'card form narrow', 'aria-labelledby': 'coach-export' },
-    h('h2', { id: 'coach-export' }, '1. Ask the AI'),
+    h('h2', { id: 'coach-export' }, '1. Training advice'),
     field('Your goals and situation', goals, { hint: 'Saved on this phone and included in the prompt. The more specific, the better the advice.' }),
     field('History to include', weeks),
     checkbox('Include body measurements (body weight, waist…)', false, (v) => { includeBody = v; updateSize(); }),
@@ -70,12 +70,15 @@ export function renderCoach({ el, rerender }) {
     h('p', { class: 'muted small' }, 'Then copy the AI\'s whole answer (or save its JSON file) and import it below. If the answer has no JSON block, the AI only gave advice and there is nothing to import.')));
   updateSize();
 
-  // ----- 2. Import -----
+  // ----- 2. Exercise details -----
+  el.append(exerciseDetailsSection(query));
+
+  // ----- 3. Import -----
   const answer = textarea('', { rows: 6, placeholder: 'Paste the AI\'s complete answer here', 'aria-label': 'AI answer' });
   const fileIn = h('input', { type: 'file', accept: '.json,.txt,.md,application/json,text/plain', class: 'sr-only', 'aria-label': 'Choose answer file', onchange: async (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) { answer.value = await readFileText(f); check(); } } });
   const result = h('div', { class: 'coach-result' });
   el.append(h('section', { class: 'card form narrow', 'aria-labelledby': 'coach-import' },
-    h('h2', { id: 'coach-import' }, '2. Import the AI\'s suggestions'),
+    h('h2', { id: 'coach-import' }, '3. Import the AI\'s answer'),
     answer, fileIn,
     h('div', { class: 'form-actions' },
       btn('Check answer', () => check(), { variant: 'primary', icon: 'check' }),
@@ -209,4 +212,50 @@ export function renderCoach({ el, rerender }) {
     sync();
     result.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
   }
+}
+
+const GAP_LABEL = { description: 'description', instructions: 'how-to', muscles: 'muscles', primaryMuscles: 'main muscles', cues: 'cues', commonMistakes: 'mistakes' };
+
+/** Pick exercises and copy a prompt that asks the AI to fill in their details. */
+function exerciseDetailsSection(query) {
+  const all = store.exercisesSorted();
+  const needing = new Set(exercisesNeedingDetails(all).map((e) => e.id));
+  const only = query.ex && store.exerciseById(query.ex) ? query.ex : null;
+  const selected = new Set(only ? [only] : needing);
+  let showAll = !!only && !needing.has(only);
+  const listEl = h('ul', { class: 'coach-ex-list' });
+  const count = h('p', { class: 'muted small', 'aria-live': 'polite' });
+  const copyBtn = btn('Copy prompt with exercises', null, { variant: 'primary', icon: 'copy', block: true });
+  const draw = () => {
+    const shown = all.filter((e) => showAll || needing.has(e.id) || selected.has(e.id));
+    listEl.replaceChildren(...shown.map((e) => {
+      const id = `exd-${e.id}`;
+      const gaps = missingDetails(e);
+      return h('li', null,
+        h('input', { type: 'checkbox', id, checked: selected.has(e.id), onchange: (ev) => { if (ev.target.checked) selected.add(e.id); else selected.delete(e.id); sync(); } }),
+        h('label', { for: id }, h('strong', null, e.name),
+          h('span', { class: 'muted small' }, gaps.length ? ` · missing ${gaps.map((g) => GAP_LABEL[g] || g).join(', ')}` : ' · complete')));
+    }));
+    if (!shown.length) listEl.append(h('li', { class: 'muted small' }, 'All your exercises have details. Tick "Show all exercises" to improve existing ones.'));
+    sync();
+  };
+  const sync = () => {
+    count.textContent = `${plural(selected.size, 'exercise')} selected`;
+    copyBtn.disabled = selected.size === 0;
+  };
+  copyBtn.addEventListener('click', async () => {
+    if (!selected.size) return;
+    const exp = buildExerciseExport(store.snapshotData(), [...selected], { appVersion: APP_VERSION });
+    await store.saveSettings({ lastCoachExport: { id: exp.exportId, at: Date.now() } });
+    await copyText(exercisePrompt(exp), 'Prompt with exercises');
+  });
+  const sec = h('section', { class: 'card form narrow', id: 'coach-exercises', 'aria-labelledby': 'coach-ex-title' },
+    h('h2', { id: 'coach-ex-title' }, '2. Fill in exercise details'),
+    h('p', { class: 'small' }, 'For exercises you added yourself: the AI writes the description, how-to steps, cues and common mistakes, sets the muscles for the muscle map, and suggests alternatives from your library. You review everything before it is saved.'),
+    checkbox('Show all exercises (also complete ones)', showAll, (v) => { showAll = v; draw(); }),
+    listEl, count, copyBtn,
+    h('p', { class: 'muted small' }, 'Paste the prompt into any AI chat, then import its answer in step 3.'));
+  draw();
+  if (query.section === 'exercises') setTimeout(() => sec.scrollIntoView({ block: 'start' }), 50);
+  return sec;
 }

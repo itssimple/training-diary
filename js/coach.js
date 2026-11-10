@@ -272,6 +272,115 @@ ${JSON.stringify(exp)}
 `;
 }
 
+// ---------- exercise details (fill in how-to, muscles, … for chosen exercises) ----------
+
+export const EXERCISE_EXPORT_FORMAT = 'training-diary-exercise-export';
+
+const emptyValue = (v) => v === undefined || v === null || (typeof v === 'string' && !v.trim()) || (Array.isArray(v) && !v.length);
+
+/** Detail fields that matter for using an exercise. Cardio/other need no cues or mistakes; other needs no muscles. */
+function coreGaps(ex) {
+  const keys = ['instructions'];
+  if (ex.type !== 'other') keys.push('muscles', 'primaryMuscles');
+  if (ex.type !== 'cardio' && ex.type !== 'other') keys.push('cues', 'commonMistakes');
+  return keys.filter((k) => emptyValue(ex[k]));
+}
+
+/** All missing detail fields (the optional one-line description included). */
+export function missingDetails(ex) {
+  return [...(emptyValue(ex.description) ? ['description'] : []), ...coreGaps(ex)];
+}
+
+/** Active exercises missing how-to, muscles, cues or mistakes (a missing description alone does not count). */
+export function exercisesNeedingDetails(exercises) {
+  return (exercises || []).filter((e) => !e.archived && coreGaps(e).length);
+}
+
+/** A small export with just the chosen exercises, plus the library names for alternatives. */
+export function buildExerciseExport(data, ids, { now = Date.now(), exportId = uid('exp'), appVersion = '' } = {}) {
+  const wanted = new Set(ids);
+  const all = data.exercises || [];
+  return {
+    format: EXERCISE_EXPORT_FORMAT,
+    version: COACH_VERSION,
+    exportId,
+    exportedAt: new Date(now).toISOString(),
+    app: { name: 'Training Diary', version: appVersion },
+    allowedValues: {
+      exerciseTypes: Object.fromEntries(Object.entries(EXERCISE_TYPES).map(([k, v]) => [k, v.label])),
+      categories: CATEGORIES, equipment: EQUIPMENT, muscles: MUSCLES, weightModes: Object.keys(WEIGHT_MODES),
+    },
+    exercisesToComplete: all.filter((e) => wanted.has(e.id)).map((e) => ({ ...exportExercise(e), missing: missingDetails(e) })),
+    libraryForAlternatives: all.filter((e) => !e.archived && !wanted.has(e.id)).map((e) => ({ id: e.id, name: e.name, type: e.type, equipment: e.equipment })),
+  };
+}
+
+/** Prompt asking the LLM to fill in exercise details; always includes the (small) data. */
+export function exercisePrompt(exp) {
+  const n = exp.exercisesToComplete.length;
+  const example = {
+    format: PLAN_FORMAT, version: COACH_VERSION, basedOnExportId: exp.exportId,
+    summary: 'Filled in details for N exercises.',
+    exercises: {
+      update: [{
+        id: '<id from exercisesToComplete>',
+        changes: {
+          description: 'One sentence: what the exercise is and what it trains.',
+          instructions: 'Step one.\nStep two.\nStep three.\nStep four.',
+          cues: 'Short cue one\nShort cue two',
+          commonMistakes: 'Mistake one\nMistake two',
+          muscles: ['Upper back', 'Lats', 'Biceps'],
+          primaryMuscles: ['Upper back'],
+          equipment: 'Cable',
+          category: 'Back',
+          weightMode: 'total',
+          lowerIsBetter: false,
+          alternativeIds: ['<id from libraryForAlternatives>'],
+        },
+        reason: 'Filled missing details; equipment was "Other", it is a cable exercise.',
+      }],
+    },
+  };
+  return `You are an experienced strength coach and exercise instructor. I use an offline workout diary app. Below is a JSON export (format "${EXERCISE_EXPORT_FORMAT}") with ${n} exercise${n === 1 ? '' : 's'} from my library whose details I want completed ("exercisesToComplete"), and the rest of my library ("libraryForAlternatives").
+
+## Your task
+For each exercise in "exercisesToComplete", fill in the details that are missing (listed in its "missing" field) and fix details that are clearly wrong. Identify the exercise from its name, type and equipment. If a name is ambiguous, choose the most common gym version and say which one you assumed in the "reason".
+
+Fields to provide:
+- description: one sentence, what it is and what it trains.
+- instructions: 3–6 short steps, one per line (separate lines with \\n), from setup to finishing the rep.
+- cues: 2–4 short coaching cues, one per line.
+- commonMistakes: 2–4 typical mistakes, one per line.
+- muscles: every muscle group that works noticeably, using ONLY these names: ${MUSCLES.join(', ')}.
+- primaryMuscles: the 1–2 main targets (they must also be in muscles).
+- category (${CATEGORIES.join(', ')}) and equipment (${EQUIPMENT.join(', ')}) if missing or "Other" but clearly known.
+- weightMode "perHand" when the weight entered is one dumbbell or kettlebell held in each hand, otherwise "total".
+- lowerIsBetter true only for assisted machines where the weight is assistance.
+- alternativeIds: up to 3 ids from "libraryForAlternatives" that train the same thing (for when a machine is busy). Only use ids that are listed there.
+
+## Rules
+- Only output exercise updates. Do not add or remove exercises, programs or workouts, and never include history.
+- Use the exact "id" of each exercise. Put only the fields you set inside "changes".
+- Do not rename an exercise unless the name is clearly a typo. Keep "type" unless it is clearly wrong (types: ${Object.keys(EXERCISE_TYPES).join(', ')}).
+- Generic, safe technique guidance. No medical advice, no URLs or video links.
+- Every update needs a short "reason".
+- Valid JSON only: double quotes, no comments, no trailing commas.
+
+## Answer format
+Answer with one short sentence, then exactly ONE JSON code block shaped like this:
+
+\`\`\`json
+${JSON.stringify(example, null, 2)}
+\`\`\`
+
+## My exercises (${EXERCISE_EXPORT_FORMAT})
+
+\`\`\`json
+${JSON.stringify(exp)}
+\`\`\`
+`;
+}
+
 // ---------- reading the answer ----------
 
 /** Find the plan JSON in an LLM answer: fenced code blocks (last valid one wins) or raw JSON. */
@@ -290,7 +399,7 @@ export function extractPlan(text) {
     try {
       const obj = JSON.parse(c.trim());
       if (obj && typeof obj === 'object' && obj.format === PLAN_FORMAT) return { ok: true, plan: obj };
-      if (obj && typeof obj === 'object' && obj.format === COACH_EXPORT_FORMAT) lastErr = 'This is the data export, not the AI\'s answer. Paste the reply you got back from the AI.';
+      if (obj && typeof obj === 'object' && (obj.format === COACH_EXPORT_FORMAT || obj.format === EXERCISE_EXPORT_FORMAT)) lastErr = 'This is the data export, not the AI\'s answer. Paste the reply you got back from the AI.';
       else lastErr = lastErr || `Found JSON, but it is not a "${PLAN_FORMAT}" answer (format field missing or different).`;
     } catch (e) {
       lastErr = lastErr || `The JSON in the answer is not valid (${e.message}). Ask the AI to "output only valid JSON in the required format".`;

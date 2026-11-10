@@ -691,3 +691,8 @@ body.has-rest .toasts, body.has-active-bar .toasts { bottom: calc(var(--nav-h) +
 del { color: var(--danger); }
 ins { text-decoration: none; color: var(--accent); font-weight: 650; }
 :root[data-theme="light"] ins { color: var(--accent-strong); }
+.coach-ex-list { list-style: none; margin: 0; padding: 0; max-height: 50vh; overflow: auto; border: 1px solid var(--border); border-radius: 10px; }
+.coach-ex-list li { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; }
+.coach-ex-list li + li { border-top: 1px solid var(--border); }
+.coach-ex-list input { width: 22px; height: 22px; margin-top: 1px; accent-color: var(--accent); flex: none; }
+.coach-ex-list label { cursor: pointer; }
