@@ -5,7 +5,7 @@ import * as W from '../workout-logic.js';
 import { h, append, btn, iconBtn, numInput, textarea, input, field, toast, confirmDialog, actionSheet, openDialog, emptyState, captureFocus, clear } from '../ui.js';
 import { icon } from '../icons.js';
 import { onTick, navigate } from '../shell.js';
-import { pickExercise } from './library.js';
+import { pickExercise, exerciseInfo } from './library.js';
 import { startEmptyWorkout } from '../actions.js';
 import { primeAudio, beep, vibrate, keepScreenOn } from '../device.js';
 import { fieldsForType, sessionElapsedSec, sessionSummary, lastPerformance, GROUP_TYPES, newRecordsIn, fmtKg, SET_KINDS, setKind } from '../model.js';
@@ -245,6 +245,7 @@ export function mountSessionEditor({ el }, session, { mode = 'active' } = {}) {
         h('p', { class: 'muted small' },
           [e.exercise?.equipment, `${p.done}/${p.total} sets`, skipped ? 'Skipped' : e.status === 'done' ? 'Complete' : null].filter(Boolean).join(' · '))),
       h('div', { class: 'row-actions' },
+        iconBtn('info', `How to do ${e.exercise?.name}`, () => openDialog({ title: e.exercise?.name || 'Exercise', wide: true, build: () => exerciseInfo(store.exerciseById(e.exerciseId) || { id: e.exerciseId, ...e.exercise }) }), { variant: 'secondary' }),
         btn('Swap', () => swap(e), { variant: 'secondary', size: 'sm', icon: 'swap', ariaLabel: `Swap ${e.exercise?.name}` }),
         iconBtn('more', `More actions for ${e.exercise?.name}`, () => entryMenu(e), { variant: 'secondary' }))));
 

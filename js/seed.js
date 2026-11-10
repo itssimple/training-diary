@@ -79,6 +79,8 @@ const RAW = [
 ];
 
 /** Starter exercises entered as the weight of one dumbbell (used in each hand). */
+import { starterInfoFields } from './exercise-info.js';
+
 export const PER_HAND_STARTERS = new Set(['ex_db_rdl', 'ex_lunge', 'ex_split_squat', 'ex_db_bench_press', 'ex_incline_db_press', 'ex_db_shoulder_press', 'ex_lateral_raise', 'ex_reverse_fly', 'ex_db_curl', 'ex_farmers_walk']);
 /** Starter exercises where a lower number is progress (assistance weight). */
 export const LOWER_IS_BETTER_STARTERS = new Set(['ex_assisted_pull_up']);
@@ -93,6 +95,10 @@ export function starterExercises(now = Date.now()) {
     type: r.type,
     muscles: r.muscles,
     instructions: '',
+    cues: '',
+    commonMistakes: '',
+    primaryMuscles: [],
+    ...starterInfoFields(r.id),
     notes: '',
     alternativeIds: (r.alt || []).map((a) => `ex_${a}`),
     defaultRestSec: r.rest ?? null,

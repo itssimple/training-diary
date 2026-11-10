@@ -3,6 +3,7 @@
 import * as store from '../store.js';
 import { h, btn, iconBtn, pageHead, emptyState, select, segmented, numInput, input, field, toast, confirmDialog, openDialog } from '../ui.js';
 import { setQuery, navigate } from '../shell.js';
+import { icon } from '../icons.js';
 import { timeChart } from '../charts.js';
 import { exerciseHistory, computeRecords, RECORD_LABELS, speedKmh, paceSecPerKm, fmtKg } from '../model.js';
 import { fmtDate, fmtDateShort, fmtDuration, fmtNum, plural, addDays, startOfDay, startOfWeek, isoDate, parseLocalDate, uid, num } from '../util.js';
@@ -32,7 +33,7 @@ function rangeStart(range) {
 export function renderProgress(ctx) {
   const { el, query } = ctx;
   const tab = query.tab || 'strength';
-  el.append(pageHead('Progress'));
+  el.append(pageHead('Progress', { actions: [h('a', { class: 'btn btn-secondary', href: '#/coach' }, icon('progress'), h('span', null, 'AI coach'))] }));
   el.append(h('nav', { class: 'tabs', 'aria-label': 'Progress sections' },
     [['strength', 'Strength'], ['cardio', 'Cardio'], ['records', 'Records'], ['body', 'Body']].map(([k, l]) =>
       h('a', { class: 'tab', href: `#/progress?tab=${k}`, 'aria-current': tab === k ? 'page' : null }, l))));

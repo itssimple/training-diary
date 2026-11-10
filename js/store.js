@@ -202,6 +202,45 @@ export async function importBundle({ exercises = [], sessions = [] }) {
   emit('all');
 }
 
+// ---------- AI coach changes (library, programs, templates only; never sessions) ----------
+
+export async function applyCoachChanges({ exercises, programs, templates }, summary = '') {
+  const undo = { id: 'plan-undo', at: Date.now(), summary, exercises: state.exercises, programs: state.programs, templates: state.templates };
+  await guarded(() => db.atomic(['exercises', 'programs', 'templates', 'meta'], (t) => {
+    for (const s of ['exercises', 'programs', 'templates']) t.clear(s);
+    for (const e of exercises) t.put('exercises', e);
+    for (const p of programs) t.put('programs', p);
+    for (const tp of templates) t.put('templates', tp);
+    t.put('meta', undo);
+  }));
+  state.exercises = exercises;
+  state.programs = programs;
+  state.templates = templates;
+  reindex();
+  emit('all');
+}
+
+export const getCoachUndo = () => db.get('meta', 'plan-undo');
+
+/** Restore library, programs and templates from before the last coach import. Sessions are untouched. */
+export async function undoCoachChanges() {
+  const u = await db.get('meta', 'plan-undo');
+  if (!u) return false;
+  await guarded(() => db.atomic(['exercises', 'programs', 'templates', 'meta'], (t) => {
+    for (const s of ['exercises', 'programs', 'templates']) t.clear(s);
+    for (const e of u.exercises) t.put('exercises', e);
+    for (const p of u.programs) t.put('programs', p);
+    for (const tp of u.templates) t.put('templates', tp);
+    t.del('meta', 'plan-undo');
+  }));
+  state.exercises = u.exercises;
+  state.programs = u.programs;
+  state.templates = u.templates;
+  reindex();
+  emit('all');
+  return true;
+}
+
 // ---------- measurements ----------
 
 export async function saveMeasurement(m) {

@@ -42,6 +42,24 @@ Each phone keeps its own diary. Two people using their own phones have completel
 3. Go to **Train → Programs** and edit the starter program, or create your own: a program holds workouts (templates), and each template holds exercises with planned sets, reps, weight, time, distance, rest and notes. Use the **⋯** menu on an exercise to link it with the next one as a superset or circuit.
 4. Set your weekly goal under **Settings → Goals**.
 
+### AI coach (any LLM)
+
+**Progress → AI coach** (also linked from Settings) sends your training to any AI chat and brings its suggestions back as reviewed changes:
+
+1. Write your goals and situation (saved on the phone), pick how much history to include, and optionally tick body measurements (off by default).
+2. **Option A:** "Copy prompt with data" and paste it into any chat (works on phones). **Option B:** "Download data file", attach it, then "Copy prompt".
+3. The prompt explains the data file (`training-diary-coach-export`, version 1) and asks for an analysis plus, if changes help, one JSON block in the `training-diary-plan` format.
+4. Paste the AI's whole answer (or pick its file) under "Import the AI's suggestions" → **Check answer**. Every proposed change is listed with the AI's reason and a before/after view. Invalid changes (unknown ids, wrong values, duplicates) are flagged and can't be applied. Ticking a workout also ticks the new exercises it needs; unticking an exercise unticks workouts that depend on it.
+5. **Apply** writes the selected changes in one step. **Undo last import** restores exercises, programs and templates to how they were.
+
+What an import can do: add or update exercises (including how-to text), archive exercises and programs, add programs, add, update or remove workout templates (sets, reps, ranges, weights, rest, supersets). What it can never do: change recorded history, measurements or settings, your personal exercise notes, or add links/media. Anything like that is ignored with a warning. All text from the AI is shown as plain text.
+
+How good the advice is depends on the AI you use. The app only checks that the changes are well-formed and refer to things that exist, not that the advice is sound.
+
+### Exercise info
+
+Tap an exercise in Train → Exercises (or the ⓘ button on an exercise during a workout) for a muscle map (front/back, primary and secondary muscles), step-by-step instructions, cues, common mistakes, your notes and your best numbers. All 60 starter exercises have this content. Edit it under **Edit**: muscle chips cycle off → secondary → primary.
+
 ### Simple logging (enter results afterwards)
 
 For people who don't want to run the app during training: **Settings → How you log workouts → Simple** (per phone). Home then shows **Log this workout** instead of Start workout. You get one row per exercise with the weight pre-filled from last time and sets × reps from the template. Change what was different, tap **Skip** for anything you didn't do, add extra exercises if needed, set the date if it wasn't today, and save. The result is a normal finished workout in History, Progress and Records. **Log other workout** does the same without a template.
@@ -165,6 +183,7 @@ An **activity session** (`kind: "activity"`) stores manual metrics: duration, di
 
 - `DB_VERSION` in `db.js` covers IndexedDB structure. Upgrades only add stores or indexes and never delete them.
 - `SCHEMA_VERSION` in `model.js` covers the record shape. When the app starts with older data, `migrations.js` converts it step by step. A copy of the pre-migration data is stored in the `meta` store first. Old export files go through the same migrations on import, and files from a newer app version are rejected.
+- **Version 3** (app 1.3.0) added `primaryMuscles`, `cues` and `commonMistakes` to exercises. The migration fills the built-in how-to content into starter exercises only where those fields are still empty.
 - **Version 2** (app 1.1.0) added `weightMode` and `lowerIsBetter` to exercises and their snapshots in recorded sessions, set `kind` (warm-up/drop/failure; missing = working set), `planned.repsMax`, and `actual.rpe`/`actual.rir`. The migration marks the starter dumbbell exercises as per hand and the assisted pull-up as lower-is-better, and copies those flags into existing history.
 
 ## Development and testing
@@ -185,9 +204,9 @@ node tests/e2e/run.mjs --shots=/tmp/td-shots   # also saves screenshots
 
 Service workers need `https` or `localhost`. Opening `index.html` as a `file://` URL will not work.
 
-**Unit tests (69)** cover the quick-log builder, a static check that no view passes possibly-null children to native `append()` (which would print "null"), set types and warm-ups, per-hand and assisted (lower-is-better) statistics, the v1 → v2 data migration, rep ranges and effort, plate and warm-up calculators, progression hints, backup reminders, CSV parsing and import (dates, durations, aliases, lb conversion, duplicates), date/number parsing, set completion and suggestions, supersets and rest logic, substitution (including the split when sets were already done), pause/resume and timestamp-based timers, records, weekly goal/streak, next-workout rotation, export → import round trip, invalid imports, migration runner, merge behaviour, `.ics` output, and checks that every runtime file is precached, versions match, no root-absolute URLs and no external URLs are used.
+**Unit tests (80)** cover the coach export, prompt, answer extraction, plan validation (unknown ids, duplicates, ranges, tempIds, dependencies, ignored history) and apply (history untouched, ids mapped, dependencies enforced), the v2 → v3 migration of how-to content, the muscle map, the quick-log builder, a static check that no view passes possibly-null children to native `append()` (which would print "null"), set types and warm-ups, per-hand and assisted (lower-is-better) statistics, the v1 → v2 data migration, rep ranges and effort, plate and warm-up calculators, progression hints, backup reminders, CSV parsing and import (dates, durations, aliases, lb conversion, duplicates), date/number parsing, set completion and suggestions, supersets and rest logic, substitution (including the split when sets were already done), pause/resume and timestamp-based timers, records, weekly goal/streak, next-workout rotation, export → import round trip, invalid imports, migration runner, merge behaviour, `.ics` output, and checks that every runtime file is precached, versions match, no root-absolute URLs and no external URLs are used.
 
-**End-to-end test** (headless Chromium, phone viewport, served under `/training-diary/`) walks through: simple logging after training (template, changed weight and sets, skipped exercise, no-template log); migrating a real version-1 IndexedDB database; warm-up sets, plate calculator and RPE; adding a past workout, editing its date and getting a progression hint from it; the calendar view; CSV import and duplicate skipping; the backup reminder; first launch; adding/editing an exercise (incl. duplicate-name rejection); creating a program, template and superset; starting a workout and recording sets; substituting an exercise; recording a superset; pause/resume; refreshing mid-workout; finishing and viewing history; verifying a template edit does not rewrite history; logging cardio; progress charts and empty states; body measurement; export and replace-import; rejecting invalid imports without data loss; offline relaunch; theme switching and persistence; wide vs narrow layouts; no horizontal overflow; discard workout; delete-all with typed confirmation.
+**End-to-end test** (headless Chromium, phone viewport, served under `/training-diary/`) walks through: the exercise info page and editing it; the AI coach round trip (prompt with data on the clipboard, data file, reviewing a pasted answer with an invalid change, dependency ticking, apply, undo, history unchanged); simple logging after training (template, changed weight and sets, skipped exercise, no-template log); migrating a real version-1 IndexedDB database; warm-up sets, plate calculator and RPE; adding a past workout, editing its date and getting a progression hint from it; the calendar view; CSV import and duplicate skipping; the backup reminder; first launch; adding/editing an exercise (incl. duplicate-name rejection); creating a program, template and superset; starting a workout and recording sets; substituting an exercise; recording a superset; pause/resume; refreshing mid-workout; finishing and viewing history; verifying a template edit does not rewrite history; logging cardio; progress charts and empty states; body measurement; export and replace-import; rejecting invalid imports without data loss; offline relaunch; theme switching and persistence; wide vs narrow layouts; no horizontal overflow; discard workout; delete-all with typed confirmation.
 
 ## Deployment to GitHub Pages
 

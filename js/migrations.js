@@ -9,6 +9,7 @@
 
 import { SCHEMA_VERSION } from './model.js';
 import { PER_HAND_STARTERS, LOWER_IS_BETTER_STARTERS } from './seed.js';
+import { starterInfoFields } from './exercise-info.js';
 
 /** DATA_MIGRATIONS[n] converts data of version n to version n + 1. */
 export const DATA_MIGRATIONS = {
@@ -48,6 +49,23 @@ export const DATA_MIGRATIONS = {
     });
     return { ...data, exercises, sessions };
   },
+  /**
+   * v2 → v3: exercises get `primaryMuscles`, `cues` and `commonMistakes`. Starter exercises get
+   * the built-in how-to content, but only in fields that are still empty, so nothing the user
+   * wrote is overwritten. Sessions are untouched.
+   */
+  2: (data) => ({
+    ...data,
+    exercises: (data.exercises || []).map((ex) => {
+      const info = ex.builtIn ? starterInfoFields(ex.id) : null;
+      const empty = (v) => v === undefined || v === null || (typeof v === 'string' && !v.trim()) || (Array.isArray(v) && !v.length);
+      const out = { ...ex };
+      for (const [k, def] of [['primaryMuscles', []], ['instructions', ''], ['cues', ''], ['commonMistakes', '']]) {
+        if (empty(out[k])) out[k] = info ? info[k] : (out[k] ?? def);
+      }
+      return out;
+    }),
+  }),
 };
 
 export const DATA_KEYS = ['exercises', 'programs', 'templates', 'sessions', 'measurements'];

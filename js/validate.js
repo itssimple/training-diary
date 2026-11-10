@@ -49,6 +49,8 @@ function validateExercise(ex, i, c) {
   if (!(ex.type in EXERCISE_TYPES)) c.err(`${p}.type`, `unknown type "${ex.type}"`);
   if ('muscles' in ex && !Array.isArray(ex.muscles)) c.err(`${p}.muscles`, 'must be a list');
   if ('alternativeIds' in ex && !Array.isArray(ex.alternativeIds)) c.err(`${p}.alternativeIds`, 'must be a list');
+  if ('primaryMuscles' in ex && !Array.isArray(ex.primaryMuscles)) c.err(`${p}.primaryMuscles`, 'must be a list');
+  for (const f of ['description', 'instructions', 'cues', 'commonMistakes', 'notes']) if (f in ex && ex[f] !== null && typeof ex[f] !== 'string') c.err(`${p}.${f}`, 'must be text');
   if ('defaultRestSec' in ex && !isNumOrNull(ex.defaultRestSec)) c.err(`${p}.defaultRestSec`, 'must be a number');
   if ('weightMode' in ex && !(ex.weightMode in WEIGHT_MODES)) c.err(`${p}.weightMode`, `unknown weight mode "${ex.weightMode}"`);
   if ('lowerIsBetter' in ex && typeof ex.lowerIsBetter !== 'boolean') c.err(`${p}.lowerIsBetter`, 'must be true or false');

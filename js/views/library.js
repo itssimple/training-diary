@@ -4,8 +4,11 @@ import * as store from '../store.js';
 import { h, append, btn, iconBtn, pageHead, field, input, select, textarea, numInput, checkbox, toast, confirmDialog, openDialog, emptyState, segmented } from '../ui.js';
 import { icon } from '../icons.js';
 import { navigate, setQuery } from '../shell.js';
-import { EXERCISE_TYPES, CATEGORIES, EQUIPMENT, MUSCLES, WEIGHT_MODES } from '../model.js';
-import { uid, num, plural } from '../util.js';
+import { EXERCISE_TYPES, CATEGORIES, EQUIPMENT, MUSCLES, WEIGHT_MODES, lastPerformance, computeRecords, RECORD_LABELS } from '../model.js';
+import { uid, num, plural, fmtDateShort } from '../util.js';
+import { muscleMapSvg, musclesFor } from '../muscle-map.js';
+import { fmtSetsCompact } from './workout.js';
+import { formatRecordValue } from './progress.js';
 
 export function trainTabs(active) {
   return h('nav', { class: 'tabs', 'aria-label': 'Train sections' },
@@ -85,10 +88,60 @@ export function renderExercise({ el, params, query }) {
   md.append(libraryList(query, id), detail);
   el.append(pageHead(isNew ? 'New exercise' : existing.name, { back: '#/library', kicker: 'Exercise library' }));
   el.append(md);
+  if (existing && !query.edit) {
+    detail.append(h('div', { class: 'form-actions' },
+      h('a', { class: 'btn btn-primary', href: `#/library/${id}?edit=1` }, icon('edit'), h('span', null, 'Edit'))),
+      exerciseInfo(existing));
+    return;
+  }
   detail.append(exerciseForm(existing, {
     onSaved: (ex) => { toast('Exercise saved.'); navigate(`#/library/${ex.id}`, { replace: true }); },
     onDeleted: () => navigate('#/library', { replace: true }),
   }));
+}
+
+const lines = (text) => String(text || '').split('\n').map((l) => l.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').trim()).filter(Boolean);
+
+/**
+ * Read-only exercise information: muscle map, how-to, cues, mistakes, personal notes and your
+ * own numbers. Used on the library page and in a dialog during workouts.
+ */
+export function exerciseInfo(ex) {
+  const wrap = h('div', { class: 'ex-info' });
+  const { primary, secondary } = musclesFor(ex);
+  const tags = [ex.category, ex.equipment, EXERCISE_TYPES[ex.type]?.label.split(' (')[0], ex.weightMode === 'perHand' ? 'Weight per hand' : null, ex.lowerIsBetter ? 'Lower weight is better' : null, ex.archived ? 'Archived' : null].filter(Boolean);
+  append(wrap, [
+    h('div', { class: 'chips' }, tags.map((t) => h('span', { class: 'chip static' }, t))),
+    ex.description ? h('p', null, ex.description) : null,
+    h('section', { class: 'card ex-muscles', 'aria-label': 'Muscles worked' },
+      h('div', { html: muscleMapSvg(ex) }),
+      primary.length || secondary.length ? h('p', { class: 'small mm-legend' },
+        primary.length ? h('span', null, h('i', { class: 'mm-key primary' }), ` Primary: ${primary.join(', ')}`) : null,
+        secondary.length ? h('span', null, h('i', { class: 'mm-key secondary' }), ` Secondary: ${secondary.join(', ')}`) : null)
+        : h('p', { class: 'muted small' }, (ex.muscles || []).includes('Cardiovascular') ? 'Mainly heart and lungs (cardio).' : 'No muscles recorded yet. Add them under Edit.')),
+  ]);
+  const steps = lines(ex.instructions);
+  const cueList = lines(ex.cues);
+  const mistakeList = lines(ex.commonMistakes);
+  if (steps.length) wrap.append(h('section', { class: 'card' }, h('h2', null, 'How to do it'), h('ol', { class: 'steps' }, steps.map((s) => h('li', null, s)))));
+  if (cueList.length || mistakeList.length) {
+    wrap.append(h('div', { class: 'ex-two' },
+      cueList.length ? h('section', { class: 'card' }, h('h2', null, icon('check'), ' Cues'), h('ul', { class: 'ticks' }, cueList.map((s) => h('li', null, s)))) : null,
+      mistakeList.length ? h('section', { class: 'card' }, h('h2', null, icon('warn'), ' Common mistakes'), h('ul', { class: 'crosses' }, mistakeList.map((s) => h('li', null, s)))) : null));
+  }
+  if (!steps.length && !cueList.length) wrap.append(h('p', { class: 'muted small' }, 'No instructions yet. Add them under Edit, or let the AI coach fill them in.'));
+  if (ex.notes) wrap.append(h('section', { class: 'card' }, h('h2', null, 'Your notes'), h('p', { class: 'pre' }, ex.notes)));
+  const last = lastPerformance(store.state.sessions, ex.id);
+  const rec = computeRecords(store.state.sessions).get(ex.id);
+  if (last || rec) {
+    const rows = [];
+    if (last) rows.push(['Last time', `${fmtDateShort(last.date)}: ${fmtSetsCompact(last.sets, ex.type, ex)}`]);
+    for (const k of ['maxWeightKg', 'leastAssistKg', 'bestE1rmKg', 'maxReps', 'longestDistanceKm', 'bestPaceSecPerKm']) if (rec?.[k]) rows.push([RECORD_LABELS[k], formatRecordValue(k, rec[k].value, rec[k], rec)]);
+    wrap.append(h('section', { class: 'card' }, h('h2', null, 'Your numbers'), h('dl', { class: 'kv' }, rows.flatMap(([k, v]) => [h('dt', null, k), h('dd', null, v)]))));
+  }
+  const alts = (ex.alternativeIds || []).map((a) => store.exerciseById(a)).filter(Boolean);
+  if (alts.length) wrap.append(h('section', { class: 'card' }, h('h2', null, 'Alternatives'), h('ul', { class: 'mini-list' }, alts.map((a) => h('li', null, h('a', { href: `#/library/${a.id}` }, a.name))))));
+  return wrap;
 }
 
 /** Exercise editor form. Also used inline from the exercise picker. */
@@ -115,9 +168,14 @@ export function exerciseForm(existing, { onSaved, onDeleted, compact = false, pr
       field('Weight step', increment, { unit: 'kg', hint: 'Used for progression hints. Auto: 2.5 (2 per hand).' })),
     checkbox('Lower weight is better (assisted exercises, e.g. assisted pull-up machine)', lowerIsBetter, (v) => { lowerIsBetter = v; }));
   const desc = textarea(ex.description, { rows: 2, maxlength: 500 });
-  const instructions = textarea(ex.instructions, { rows: 3, maxlength: 2000 });
+  const instructions = textarea(ex.instructions, { rows: 5, maxlength: 3000, placeholder: 'One step per line' });
+  const cues = textarea(ex.cues, { rows: 3, maxlength: 1500, placeholder: 'One cue per line, e.g. Brace before each rep' });
+  const mistakes = textarea(ex.commonMistakes, { rows: 3, maxlength: 1500, placeholder: 'One per line, e.g. Knees caving in' });
   const notes = textarea(ex.notes, { rows: 2, maxlength: 2000, placeholder: 'e.g. seat height 4, handle position' });
-  const muscles = new Set(ex.muscles || []);
+  // Muscle level: 'primary' (main target) or 'secondary' (helps). Unlisted = not worked.
+  const level = new Map((ex.muscles || []).map((m) => [m, 'secondary']));
+  for (const m of ex.primaryMuscles || []) level.set(m, 'primary');
+  if (!(ex.primaryMuscles || []).length && ex.muscles?.length) level.set(ex.muscles[0], 'primary');
   const alts = new Set(ex.alternativeIds || []);
   const meta = (ex.meta || []).map((m) => ({ ...m }));
   let isActivity = !!ex.isActivity;
@@ -129,10 +187,18 @@ export function exerciseForm(existing, { onSaved, onDeleted, compact = false, pr
   type.addEventListener('change', syncType);
   syncType();
 
-  const muscleChips = h('div', { class: 'chips', role: 'group', 'aria-label': 'Muscle groups' }, MUSCLES.map((m) => h('button', {
-    type: 'button', class: 'chip', 'aria-pressed': String(muscles.has(m)),
-    onclick: (e) => { if (muscles.has(m)) muscles.delete(m); else muscles.add(m); e.currentTarget.setAttribute('aria-pressed', String(muscles.has(m))); },
-  }, m)));
+  const chipLabel = (m) => `${m}${level.get(m) === 'primary' ? ' · primary' : level.get(m) === 'secondary' ? ' · secondary' : ''}`;
+  const muscleChips = h('div', { class: 'chips', role: 'group', 'aria-label': 'Muscle groups: tap once for secondary, twice for primary, three times to clear' }, MUSCLES.map((m) => h('button', {
+    type: 'button', class: 'chip muscle-chip', dataset: { level: level.get(m) || 'none' }, 'aria-pressed': String(level.has(m)),
+    onclick: (e) => {
+      const next = { undefined: 'secondary', secondary: 'primary', primary: undefined }[level.get(m)];
+      if (next) level.set(m, next); else level.delete(m);
+      const b = e.currentTarget;
+      b.dataset.level = next || 'none';
+      b.setAttribute('aria-pressed', String(!!next));
+      b.textContent = chipLabel(m);
+    },
+  }, chipLabel(m))));
 
   const altList = h('ul', { class: 'mini-list' });
   const drawAlts = () => {
@@ -160,11 +226,13 @@ export function exerciseForm(existing, { onSaved, onDeleted, compact = false, pr
     h('div', { class: 'grid-2' }, field('Measured as', type), cardioField),
     weightBox,
     h('div', { class: 'grid-2' }, field('Category', category), field('Equipment', equipment)),
-    compact ? null : h('fieldset', { class: 'fieldset' }, h('legend', null, 'Muscle groups (optional)'), muscleChips),
+    compact ? null : h('fieldset', { class: 'fieldset' }, h('legend', null, 'Muscle groups (optional)'), h('p', { class: 'hint' }, 'Tap once: secondary. Twice: primary (main target). Three times: clear.'), muscleChips),
     field('Default rest', rest, { unit: 'seconds', hint: 'Overrides the app default rest timer for this exercise.' }),
     checkbox('Show in "Log activity" (for outdoor or standalone activities)', isActivity, (v) => { isActivity = v; }),
     compact ? null : field('Short description', desc),
-    compact ? null : field('Instructions', instructions),
+    compact ? null : field('How to do it', instructions, { hint: 'One step per line. Shown as a numbered list.' }),
+    compact ? null : field('Cues', cues, { hint: 'Short reminders, one per line.' }),
+    compact ? null : field('Common mistakes', mistakes, { hint: 'One per line.' }),
     compact ? null : field('Personal notes', notes, { hint: 'Settings, cues, where it is in your gym.' }),
     compact ? null : h('fieldset', { class: 'fieldset' }, h('legend', null, 'Alternative exercises'), altList,
       btn('Add alternative', async () => {
@@ -221,9 +289,13 @@ export function exerciseForm(existing, { onSaved, onDeleted, compact = false, pr
       lowerIsBetter,
       incrementKg: num(increment.value) > 0 ? num(increment.value) : null,
       description: compact ? ex.description : desc.value.trim(),
-      instructions: compact ? ex.instructions : instructions.value.trim(),
+      instructions: compact ? (ex.instructions || '') : instructions.value.trim(),
+      cues: compact ? (ex.cues || '') : cues.value.trim(),
+      commonMistakes: compact ? (ex.commonMistakes || '') : mistakes.value.trim(),
       notes: compact ? ex.notes : notes.value.trim(),
-      muscles: [...muscles],
+      // Primary muscles first, then secondary, in the list order of MUSCLES.
+      muscles: compact ? (ex.muscles || []) : [...MUSCLES.filter((m) => level.get(m) === 'primary'), ...MUSCLES.filter((m) => level.get(m) === 'secondary')],
+      primaryMuscles: compact ? (ex.primaryMuscles || []) : MUSCLES.filter((m) => level.get(m) === 'primary'),
       alternativeIds: [...alts],
       isActivity,
       meta: meta.filter((m) => m.key.trim()).map((m) => ({ key: m.key.trim(), value: String(m.value || '').trim() })),

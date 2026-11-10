@@ -21,6 +21,7 @@ import { renderHistory, renderSession } from './views/history.js';
 import { renderProgress } from './views/progress.js';
 import { renderSettings } from './views/settings.js';
 import { renderQuick } from './views/quick.js';
+import { renderCoach } from './views/coach.js';
 
 const ROUTES = [
   [/^\/$/, renderHome, 'home'],
@@ -35,6 +36,7 @@ const ROUTES = [
   [/^\/history$/, renderHistory, 'history'],
   [/^\/history\/([^/]+)$/, renderSession, 'history'],
   [/^\/progress$/, renderProgress, 'progress'],
+  [/^\/coach$/, renderCoach, 'progress'],
   [/^\/settings$/, renderSettings, 'settings'],
 ];
 

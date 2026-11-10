@@ -31,7 +31,7 @@ async function shot(page, name) { if (SHOTS) await page.screenshot({ path: join(
 const server = await startServer(PORT);
 const { chromium } = await loadPlaywright();
 const browser = await chromium.launch();
-const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, acceptDownloads: true });
+const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, acceptDownloads: true, permissions: ['clipboard-read', 'clipboard-write'] });
 const page = await context.newPage();
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
@@ -59,6 +59,7 @@ await step('2. add and edit an exercise', async () => {
   await form.getByLabel('Equipment').selectOption('Cable');
   await page.getByRole('button', { name: 'Create exercise' }).click();
   await page.waitForSelector('h1:has-text("Test cable fly")');
+  await page.getByRole('link', { name: 'Edit' }).click();
   await page.getByLabel('Name', { exact: true }).fill('Test cable fly (low)');
   await page.getByRole('button', { name: 'Save changes' }).click();
   await page.waitForSelector('h1:has-text("Test cable fly (low)")');
@@ -513,6 +514,99 @@ await step('24. simple logging: enter results after training', async () => {
   await go('#/settings');
   await page.getByRole('button', { name: 'Live', exact: true }).click();
   await page.waitForSelector('text=Live logging on');
+});
+
+await step('25. exercise info page with muscle map, how-to, cues; editable', async () => {
+  await go('#/library/ex_back_squat');
+  await page.waitForSelector('.muscle-map svg');
+  expect(await page.locator('.muscle-map .mm-primary[data-muscle="Quads"]').count() === 2, 'quads highlighted on both sides');
+  expect(await page.locator('.ex-info ol.steps li').count() >= 4, 'how-to steps listed');
+  await page.waitForSelector('.ex-info h2:has-text("Common mistakes")');
+  await shot(page, '25-exercise-info');
+  await page.getByRole('link', { name: 'Edit' }).click();
+  await page.getByLabel('Cues').fill('Big breath\nKnees out');
+  await page.locator('.muscle-chip', { hasText: /^Hamstrings/ }).click();
+  await page.getByRole('button', { name: 'Save changes' }).click();
+  await page.waitForSelector('.ex-info .ticks li:has-text("Knees out")');
+  await page.waitForSelector('.mm-legend:has-text("Secondary:"):has-text("Hamstrings")');
+  // Info from inside a workout.
+  await go('#/train');
+  await page.getByRole('button', { name: 'Start Full body A' }).click();
+  await page.waitForURL(/#\/workout/);
+  await page.getByRole('button', { name: /^How to do / }).first().click();
+  await dialog().locator('.muscle-map').waitFor();
+  await dialog().locator('.dialog-head button').click();
+  await page.getByRole('button', { name: 'Workout options' }).click();
+  await dialog().getByRole('button', { name: 'Discard workout' }).click();
+  await dialog().getByRole('button', { name: 'Discard workout' }).click();
+  await page.waitForSelector('text=Workout discarded.');
+});
+
+await step('26. AI coach: export prompt + data, import reviewed plan, undo', async () => {
+  await go('#/history');
+  const historyCount = await page.locator('.hist-row').count();
+  await go('#/coach');
+  await page.getByLabel('Your goals and situation').fill('Stronger legs, 3x per week');
+  await page.getByRole('button', { name: 'Copy prompt with data' }).click();
+  await page.waitForSelector('text=Prompt with data copied');
+  const prompt = await page.evaluate(() => navigator.clipboard.readText());
+  expect(prompt.includes('Stronger legs, 3x per week') && prompt.includes('"format": "training-diary-plan"') && prompt.includes('"format":"training-diary-coach-export"'), 'prompt has goals, answer format and data');
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Download data file' }).click()]);
+  const exportPath = join(tmp, 'coach.json');
+  await dl.saveAs(exportPath);
+  const exp = JSON.parse(await readFile(exportPath, 'utf8'));
+  expect(exp.format === 'training-diary-coach-export' && exp.history.length > 0 && !exp.bodyMeasurements, 'data file without body data by default');
+
+  // An LLM-style answer: prose plus one JSON block, with one invalid change and a history attempt.
+  const plan = {
+    format: 'training-diary-plan', version: 1, basedOnExportId: exp.exportId, summary: 'Add an upper-back row and a lower-body day.',
+    history: [{ date: '2020-01-01', note: 'should be ignored' }],
+    exercises: {
+      add: [{ tempId: 'new:wide-row', name: 'Wide-grip cable row', type: 'strength', category: 'Back', equipment: 'Cable', muscles: ['Upper back', 'Rear delts'], primaryMuscles: ['Upper back'], description: 'Row with a wide bar.', instructions: 'Sit tall\nPull to the chest\nReturn slowly', cues: 'Elbows wide', commonMistakes: 'Leaning back', reason: 'More upper-back work' }],
+      update: [{ id: 'ex_ghost', changes: { name: 'Nope' }, reason: 'Invalid on purpose' }],
+    },
+    templates: {
+      add: [{ tempId: 'new:lower', programId: 'prg_starter', name: 'Lower C', reason: 'Extra leg day', items: [
+        { exerciseId: 'ex_back_squat', sets: 4, reps: 5, repsMax: 8, weightKg: 80 },
+        { exerciseId: 'new:wide-row', sets: 3, reps: 10 },
+      ] }],
+    },
+  };
+  await page.getByLabel('AI answer').fill(`Here is my analysis.\n\n1. Squat volume is low.\n\n\`\`\`json\n${JSON.stringify(plan, null, 2)}\n\`\`\``);
+  await page.getByRole('button', { name: 'Check answer' }).click();
+  await page.waitForSelector('.coach-change');
+  expect(await page.locator('.coach-change').count() === 3, 'three proposed changes');
+  expect(await page.locator('.coach-change.invalid').count() === 1, 'invalid change flagged');
+  await page.waitForSelector('.coach-warnings:has-text("past training and settings can never be changed")');
+  await page.evaluate(() => document.querySelector('.coach-result h3').scrollIntoView({ block: 'start' }));
+  await page.waitForTimeout(700);
+  await shot(page, '26-coach-review');
+  // Unticking the new exercise also unticks the workout that needs it.
+  const exBox = page.locator('.coach-change', { hasText: 'Wide-grip cable row' }).first().locator('input[type=checkbox]');
+  const tplBox = page.locator('.coach-change', { hasText: 'Lower C' }).locator('input[type=checkbox]');
+  await exBox.uncheck();
+  expect(!(await tplBox.isChecked()), 'dependent workout unticked');
+  await tplBox.check();
+  expect(await exBox.isChecked(), 'ticking the workout ticks its new exercise again');
+  await page.getByRole('button', { name: 'Apply 2 changes' }).click();
+  await page.waitForSelector('text=Applied 2 changes');
+  await go('#/train');
+  await page.waitForSelector('.program-card:has-text("Lower C")');
+  await go('#/library');
+  await page.getByLabel('Search exercises').fill('wide-grip');
+  await page.locator('.row-link', { hasText: 'Wide-grip cable row' }).click();
+  await page.waitForSelector('.ex-info ol.steps li:has-text("Pull to the chest")');
+  await go('#/history');
+  expect(await page.locator('.hist-row').count() === historyCount, 'history unchanged');
+  // Undo restores the library and templates.
+  await go('#/coach');
+  await page.getByRole('button', { name: 'Undo last import' }).click();
+  await dialog().getByRole('button', { name: 'Undo import' }).click();
+  await page.waitForSelector('text=Import undone.');
+  await go('#/train');
+  expect(!(await page.locator('.program-card:has-text("Lower C")').count()), 'workout removed by undo');
+  await go('#/history');
+  expect(await page.locator('.hist-row').count() === historyCount, 'history still unchanged after undo');
 });
 
 await step('17. discard workout and delete all data require confirmation', async () => {

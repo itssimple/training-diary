@@ -4,7 +4,7 @@
 import { startOfWeek, addDays } from './util.js';
 
 /** Version of the data shape stored in IndexedDB and written to exports. */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 export const APP_ID = 'training-diary';
 
 /**

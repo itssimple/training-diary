@@ -632,3 +632,62 @@ body.has-rest .toasts, body.has-active-bar .toasts { bottom: calc(var(--nav-h) +
 .quick-head, .quick-list, .quick-save, .view > .btn-block { max-width: 760px; }
 .quick-when { display: grid; grid-template-columns: minmax(0, 1fr) 120px; gap: 8px; align-items: end; }
 @media (max-width: 380px) { .quick-when { grid-template-columns: 1fr; } }
+
+/* ---------- exercise info & muscle map ---------- */
+
+.ex-info { display: flex; flex-direction: column; gap: 12px; }
+.ex-info > * { margin: 0; }
+.ex-info h2 { display: flex; align-items: center; gap: 6px; font-size: 1.05rem; }
+.ex-info .pre { white-space: pre-wrap; }
+.ex-muscles { padding: 10px 12px; }
+.muscle-map { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; max-width: 360px; margin: 0 auto; }
+.mm-figure { width: 100%; height: auto; display: block; }
+.mm-body { fill: var(--surface-3); }
+.mm-idle { fill: color-mix(in srgb, var(--text-muted) 28%, var(--surface-3)); }
+.mm-secondary { fill: var(--accent); opacity: .45; }
+.mm-primary { fill: var(--accent); }
+.mm-label { fill: var(--text-muted); font-size: 9px; font-family: var(--font); }
+.mm-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; justify-content: center; margin: 6px 0 0; }
+.mm-key { display: inline-block; width: 10px; height: 10px; border-radius: 3px; background: var(--accent); vertical-align: -1px; }
+.mm-key.secondary { opacity: .45; }
+.steps { margin: 0; padding-left: 1.4rem; display: flex; flex-direction: column; gap: 6px; }
+.steps li::marker { font-weight: 800; color: var(--accent); }
+:root[data-theme="light"] .steps li::marker { color: var(--accent-strong); }
+.ticks, .crosses { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.ticks li, .crosses li { padding-left: 1.4rem; position: relative; }
+.ticks li::before { content: "✓"; position: absolute; left: 0; color: var(--accent); font-weight: 800; }
+.crosses li::before { content: "✕"; position: absolute; left: 0; color: var(--danger); font-weight: 800; }
+.ex-two { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.muscle-chip[data-level="secondary"] { background: var(--accent-soft); border-color: var(--accent); color: var(--text); }
+.muscle-chip[data-level="primary"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+
+/* ---------- AI coach ---------- */
+
+.coach-options { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+.coach-option { border: 1px solid var(--border); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.coach-option > * { margin: 0; }
+.coach-result { display: flex; flex-direction: column; gap: 10px; }
+.coach-result:empty { display: none; }
+.coach-summary { font-weight: 600; }
+.coach-warnings { flex-direction: column; padding-left: 28px; margin: 0; }
+.coach-group { display: flex; flex-direction: column; gap: 8px; }
+.coach-change { border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.coach-change > * { margin: 0; }
+.coach-change.invalid { border-color: var(--danger); background: var(--danger-soft); }
+.coach-change-head { display: flex; gap: 10px; align-items: flex-start; }
+.coach-change-head input { width: 22px; height: 22px; margin-top: 2px; accent-color: var(--accent); flex: none; }
+.coach-change-head label { cursor: pointer; }
+.coach-change .badge.op { margin-left: 0; }
+.op-add .badge.op { background: var(--accent); color: var(--accent-ink); }
+.op-archive .badge.op, .op-remove .badge.op { background: var(--danger-soft); color: var(--danger); }
+.coach-reason { font-style: italic; color: var(--text-muted); }
+.coach-items { margin: 0; padding-left: 1.1rem; font-size: .9rem; }
+.coach-items li.grouped { list-style: none; border-left: 3px solid var(--accent); padding-left: 8px; margin-left: -1.1rem; }
+.coach-diff, .coach-problems, .coach-notes { margin: 0; padding-left: 1.1rem; }
+.coach-problems { color: var(--danger); list-style: none; padding-left: 0; }
+.coach-problems .icon { width: 16px; height: 16px; display: inline; vertical-align: -3px; }
+.coach-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (max-width: 480px) { .coach-compare { grid-template-columns: 1fr; } }
+del { color: var(--danger); }
+ins { text-decoration: none; color: var(--accent); font-weight: 650; }
+:root[data-theme="light"] ins { color: var(--accent-strong); }

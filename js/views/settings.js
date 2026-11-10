@@ -161,6 +161,10 @@ export function renderSettings({ el, rerender }) {
     field('Remind me to back up after', backupEvery, { unit: 'new sessions', hint: `${plural(sessionsSinceExport(store.state.sessions, st), 'session')} since the last backup.` }),
     fileInput));
 
+  grid.append(section('AI coach',
+    h('p', { class: 'small' }, 'Export your training data with a ready-made prompt for any AI chat, and import the workout changes it suggests after reviewing them.'),
+    h('a', { class: 'btn btn-secondary', href: '#/coach' }, icon('progress'), h('span', null, 'Open AI coach'))));
+
   // Import history from other diaries
   const csvInput = h('input', { type: 'file', accept: '.csv,text/csv,text/plain', class: 'sr-only', 'aria-label': 'Choose CSV file', onchange: (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) importCsv(f); } });
   grid.append(section('Import training history',
