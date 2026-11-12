@@ -492,7 +492,7 @@ await step('24. simple logging: enter results after training', async () => {
   const leaked = await page.evaluate(() => [...document.querySelectorAll('.quick-list *')].flatMap((n) => [...n.childNodes]).filter((t) => t.nodeType === 3 && /\b(null|undefined|NaN)\b/.test(t.nodeValue)).map((t) => t.nodeValue));
   expect(!leaked.length, `quick log shows: ${leaked.join(' | ')}`);
   await shot(page, '24-quick-log');
-  await page.getByRole('button', { name: 'Save workout' }).click();
+  await page.getByRole('button', { name: 'Save workout with the When and Duration fields' }).click();
   await page.waitForURL(/#\/history\/ses_.*done=1/);
   await page.waitForSelector('text=Workout saved');
   const first = page.locator('.entry-detail').first();
@@ -500,17 +500,28 @@ await step('24. simple logging: enter results after training', async () => {
   expect(/55 kg/.test(await first.innerText()), 'changed weight recorded');
   await page.waitForSelector(`.entry-detail:has(h3:text("${secondName}")):has-text("Skipped")`);
 
-  // Without a template: validation, then add an exercise and save.
+  // Without a template, opened 47 minutes ago (the start time survives the app being closed).
+  await page.evaluate(() => localStorage.setItem('td-quick-started', String(Date.now() - 47 * 60000)));
   await go('#/quick');
-  await page.getByRole('button', { name: 'Save workout' }).click();
+  await page.getByRole('button', { name: 'Save workout with the When and Duration fields' }).click();
   await page.waitForSelector('.form-error:has-text("at least one exercise")');
   await page.getByRole('button', { name: 'Add exercise' }).click();
   await dialog().getByLabel('Search exercises').fill('leg press');
   await dialog().locator('.pick-row', { hasText: 'Leg press' }).click();
   await page.getByLabel('Leg press: Weight').fill('70');
-  await page.getByRole('button', { name: 'Save workout' }).click();
+  await page.waitForSelector('.quick-start:has-text("47 min ago")');
+  await shot(page, '24-quick-timed');
+  await page.getByRole('button', { name: 'Save, duration 47 min' }).click();
   await page.waitForURL(/#\/history\/ses_/);
   await page.waitForSelector('text=10 × 70 kg');
+  expect(/47:00/.test(await page.locator('.stat-row').first().innerText()), 'duration = time since logging started');
+  expect(await page.evaluate(() => localStorage.getItem('td-quick-started')) === null, 'start time cleared after saving');
+  // A fresh log starts counting now; editing the start time disables the timed save; reset works.
+  await go('#/quick');
+  await page.waitForSelector('.quick-start:has-text("just now")');
+  await page.getByLabel('When', { exact: true }).fill('2026-01-05T18:00');
+  expect(await page.getByRole('button', { name: /^Save, duration/ }).isDisabled(), 'timed save off after editing the start');
+  await page.waitForSelector('.quick-start:has-text("You changed the start time")');
   await go('#/settings');
   await page.getByRole('button', { name: 'Live', exact: true }).click();
   await page.waitForSelector('text=Live logging on');

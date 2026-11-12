@@ -696,3 +696,6 @@ ins { text-decoration: none; color: var(--accent); font-weight: 650; }
 .coach-ex-list li + li { border-top: 1px solid var(--border); }
 .coach-ex-list input { width: 22px; height: 22px; margin-top: 1px; accent-color: var(--accent); flex: none; }
 .coach-ex-list label { cursor: pointer; }
+.quick-save { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+.quick-save .btn { white-space: normal; line-height: 1.15; }
+.quick-start { max-width: 760px; margin: 0; }

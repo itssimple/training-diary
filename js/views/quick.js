@@ -6,10 +6,10 @@ import * as store from '../store.js';
 import * as W from '../workout-logic.js';
 import { h, append, btn, iconBtn, pageHead, field, input, numInput, select, textarea, toast, emptyState } from '../ui.js';
 import { icon } from '../icons.js';
-import { navigate } from '../shell.js';
+import { navigate, onTick } from '../shell.js';
 import { pickExercise } from './library.js';
 import { fieldsForType, lastPerformance } from '../model.js';
-import { num, fmtDateShort, isoDateTimeLocal, parseLocalDate, plural, parseDuration } from '../util.js';
+import { num, fmtDateShort, isoDateTimeLocal, parseLocalDate, plural, parseDuration, fmtTime, fmtDurationWords } from '../util.js';
 import { fmtSetsCompact } from './workout.js';
 
 /** [label, unit] for the weight input of an exercise. */
@@ -17,6 +17,29 @@ function weightField(ex) {
   if (ex.lowerIsBetter) return ['Assistance', 'kg'];
   if (ex.weightMode === 'perHand') return ['Weight', 'kg per dumbbell'];
   return ex.type === 'bodyweight' ? ['Added weight', 'kg, optional'] : ['Weight', 'kg'];
+}
+
+// When logging was started, so "Save, duration N min" can fill in the duration. Kept in
+// localStorage (a per-phone convenience) so it survives the app being closed mid-workout.
+const START_KEY = 'td-quick-started';
+const START_MAX_AGE = 4 * 3600000;
+
+function loggingStart(now = Date.now()) {
+  try {
+    const v = Number(localStorage.getItem(START_KEY));
+    if (v && v <= now && now - v < START_MAX_AGE) return v;
+    localStorage.setItem(START_KEY, String(now));
+  } catch { /* storage unavailable: count from now */ }
+  return now;
+}
+
+function resetLoggingStart(now = Date.now()) {
+  try { localStorage.setItem(START_KEY, String(now)); } catch { /* ignore */ }
+  return now;
+}
+
+function clearLoggingStart() {
+  try { localStorage.removeItem(START_KEY); } catch { /* ignore */ }
 }
 
 export function renderQuick({ el, query }) {
@@ -38,7 +61,10 @@ export function renderQuick({ el, query }) {
   el.append(pageHead(template ? template.name : 'Log workout', { back: '#/', kicker: 'Log after training' }));
   const tplSel = select(options, tplId, { 'aria-label': 'Workout' });
   tplSel.addEventListener('change', () => navigate(`#/quick${tplSel.value === 'none' ? '' : `?tpl=${tplSel.value}`}`, { replace: true }));
-  const when = input({ type: 'datetime-local', value: isoDateTimeLocal(Date.now()), max: isoDateTimeLocal(Date.now() + 3600000) });
+  let started = loggingStart();
+  let whenEdited = false;
+  const when = input({ type: 'datetime-local', value: isoDateTimeLocal(started), max: isoDateTimeLocal(Date.now() + 3600000) });
+  when.addEventListener('input', () => { whenEdited = true; updateTimer(); });
   const mins = numInput(null, { integer: true, placeholder: 'optional' });
   const notes = textarea('', { rows: 2, maxlength: 2000, placeholder: 'Optional' });
   el.append(h('section', { class: 'card form quick-head' },
@@ -109,13 +135,34 @@ export function renderQuick({ el, query }) {
     const ex = await pickExercise({ title: 'Add exercise' });
     if (!ex) return;
     rows.push(W.quickRowDefaults(ex, null, last(ex.id)));
+    err.hidden = true;
     draw();
     list.lastElementChild?.querySelector('input')?.focus();
   }, { icon: 'plus', block: true }));
   el.append(field('Notes', notes));
 
-  el.append(h('div', { class: 'quick-save' }, btn('Save workout', async () => {
-    const startedAt = parseLocalDate(when.value);
+  const secondsAgo = () => Math.max(0, Math.round((Date.now() - started) / 1000));
+  const elapsedMin = () => Math.round(secondsAgo() / 60);
+  const startInfo = h('p', { class: 'muted small quick-start' });
+  const timedBtn = btn('', () => save(true), { variant: 'primary', size: 'lg', block: true, icon: 'timer' });
+  function updateTimer() {
+    timedBtn.querySelector('span').textContent = `Save, duration ${elapsedMin()} min`;
+    timedBtn.disabled = whenEdited;
+    startInfo.replaceChildren();
+    append(startInfo, [
+      whenEdited
+        ? 'You changed the start time, so the duration is not counted automatically. Fill in Duration above instead.'
+        : `Logging started ${fmtTime(started)} (${secondsAgo() < 60 ? 'just now' : `${fmtDurationWords(secondsAgo())} ago`}). The main save button uses this as start and now as end. `,
+      whenEdited ? null : h('button', { type: 'button', class: 'linklike', onclick: () => {
+        started = resetLoggingStart();
+        when.value = isoDateTimeLocal(started);
+        updateTimer();
+        toast('Start time set to now.');
+      } }, 'Reset to now')]);
+  }
+
+  async function save(useElapsed) {
+    const startedAt = useElapsed ? started : parseLocalDate(when.value);
     const fail = (m) => { err.textContent = m; err.hidden = false; err.scrollIntoView({ block: 'center' }); };
     if (!startedAt) return fail('Enter a valid date and time.');
     const active = rows.filter((r) => !r.skipped);
@@ -128,15 +175,20 @@ export function renderQuick({ el, query }) {
       return false;
     }).map((r) => exMap.get(r.exerciseId).name);
     if (missing.length) return fail(`Fill in ${missing.join(', ')} (or mark ${missing.length === 1 ? 'it' : 'them'} as skipped).`);
-    const m = num(mins.value);
+    const m = useElapsed ? elapsedMin() : num(mins.value);
     err.hidden = true;
     const session = W.buildQuickSession({
       template, program: template ? store.programById(template.programId) : null, exercisesById: exMap,
       rows, startedAt, durationMin: m, notes: notes.value.trim(),
     });
     await store.saveSession(session);
+    clearLoggingStart();
     navigate(`#/history/${session.id}?done=1`);
-  }, { variant: 'primary', size: 'lg', block: true, icon: 'check' })));
+  }
 
-  return null;
+  el.append(startInfo, h('div', { class: 'quick-save' },
+    timedBtn,
+    btn('Save', () => save(false), { variant: 'secondary', size: 'lg', icon: 'check', ariaLabel: 'Save workout with the When and Duration fields' })));
+  updateTimer();
+  return onTick(updateTimer);
 }
